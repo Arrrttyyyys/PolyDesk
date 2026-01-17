@@ -1,8 +1,8 @@
 "use client";
 
-import { Target, Hash, DollarSign, TrendingUp, TrendingDown, Shield } from "lucide-react";
+import { Target, Hash, DollarSign, TrendingUp, TrendingDown } from "lucide-react";
 import { Market, PortfolioLeg } from "@/lib/types";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 
 interface TradeTicketProps {
   market: Market | null;
@@ -27,23 +27,54 @@ export default function TradeTicket({ market, onAddToPortfolio, onTradeChange }:
   }
 
   const currentPrice = outcome === "yes" ? market.yesPrice : market.noPrice;
-  const entryPrice = orderType === "limit" && limitPrice ? parseFloat(limitPrice) : currentPrice;
-  const sizeNum = parseFloat(size) || 0;
+  const entryPrice =
+    orderType === "limit" && limitPrice ? parseFloat(limitPrice) : currentPrice;
 
-  // Notify parent of trade changes
-  useEffect(() => {
-    if (onTradeChange) {
-      onTradeChange(sizeNum, direction);
+  const sizeInput = parseFloat(size) || 0;
+
+  // SELL is treated as a SHORT (not "closing"), since we do not track inventory here.
+  // Short max loss per share is (1 - entryPrice), and collateral posted approximates that.
+  const collateralPerShare = Math.max(1 - entryPrice, 0);
+
+  const shares = useMemo(() => {
+    if (inputMode === "shares") return sizeInput;
+
+    // inputMode === "usdc"
+    if (direction === "buy") {
+      // USDC sizing -> shares = USDC / entryPrice
+      if (entryPrice <= 0) return 0;
+      return sizeInput / entryPrice;
     }
+
+    // direction === "sell" (short): USDC sizing -> shares = USDC / collateralPerShare
+    if (collateralPerShare <= 0) return 0;
+    return sizeInput / collateralPerShare;
+  }, [inputMode, sizeInput, direction, entryPrice, collateralPerShare]);
+
+  const sizeNum = shares;
+
+  useEffect(() => {
+    if (onTradeChange) onTradeChange(sizeNum, direction);
   }, [sizeNum, direction, onTradeChange]);
 
-  // Calculations
-  const estCost = sizeNum * entryPrice;
-  const estPayout = direction === "buy" ? sizeNum : sizeNum * (2 - entryPrice);
-  const maxGain = direction === "buy" ? sizeNum * (1 - entryPrice) : sizeNum * entryPrice;
-  const maxLoss = direction === "buy" ? sizeNum * entryPrice : sizeNum * (1 - entryPrice);
-  const breakeven = direction === "buy" ? entryPrice : 1 - entryPrice;
-  const roi = entryPrice > 0 ? ((maxGain / estCost) * 100) : 0;
+  // Costs / proceeds
+  const cashPaid = sizeNum * entryPrice; // buy cost
+  const collateralPosted = sizeNum * collateralPerShare; // short collateral estimate
+  const estCost = direction === "buy" ? cashPaid : collateralPosted;
+  const estProceeds = sizeNum * entryPrice; // short sale proceeds (not profit)
+
+  // Resolution risk bounds (per share)
+  const maxGainPerShare = direction === "buy" ? 1 - entryPrice : entryPrice;
+  const maxLossPerShare = direction === "buy" ? entryPrice : 1 - entryPrice;
+
+  const maxGain = sizeNum * maxGainPerShare;
+  const maxLoss = sizeNum * maxLossPerShare;
+
+  // For binary tokens, "breakeven" at resolution is basically entry probability/price.
+  const breakeven = entryPrice;
+
+  // ROI shown as "max gain / capital used"
+  const roi = estCost > 0 ? (maxGain / estCost) * 100 : 0;
 
   const handleAddToPortfolio = () => {
     if (sizeNum > 0 && entryPrice > 0) {
@@ -56,7 +87,7 @@ export default function TradeTicket({ market, onAddToPortfolio, onTradeChange }:
         entryPrice,
         currentMid: currentPrice,
       });
-      // Reset form
+
       setSize("");
       setLimitPrice("");
     }
@@ -92,7 +123,7 @@ export default function TradeTicket({ market, onAddToPortfolio, onTradeChange }:
               : "bg-secondary/30 text-muted-foreground hover:text-foreground"
           }`}
         >
-          Sell
+          Sell (Short)
         </button>
       </div>
 
@@ -146,6 +177,7 @@ export default function TradeTicket({ market, onAddToPortfolio, onTradeChange }:
             USDC
           </button>
         </div>
+
         <div className="flex gap-1 bg-secondary/30 rounded-lg p-1">
           <button
             onClick={() => setOrderType("market")}
@@ -171,7 +203,7 @@ export default function TradeTicket({ market, onAddToPortfolio, onTradeChange }:
       </div>
 
       {/* Size Input */}
-      <div className="mb-4">
+      <div className="mb-2">
         <label className="block text-xs text-muted-foreground mb-1">
           Size ({inputMode === "shares" ? "shares" : "USDC"})
         </label>
@@ -183,6 +215,18 @@ export default function TradeTicket({ market, onAddToPortfolio, onTradeChange }:
           className="w-full px-3 py-2 bg-input border border-border/50 rounded-lg text-foreground font-mono focus:outline-none focus:ring-2 focus:ring-primary/50"
         />
       </div>
+
+      {/* Derived shares when sizing by USDC */}
+      {inputMode === "usdc" && (
+        <div className="mb-4 text-xs text-muted-foreground">
+          Est. Shares: <span className="font-mono text-foreground">{sizeNum.toFixed(2)}</span>
+          {direction === "sell" && (
+            <span className="ml-2">
+              (Collateral/share: <span className="font-mono text-foreground">{collateralPerShare.toFixed(2)}</span>)
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Limit Price Input */}
       {orderType === "limit" && (
@@ -207,13 +251,21 @@ export default function TradeTicket({ market, onAddToPortfolio, onTradeChange }:
           <span className="text-muted-foreground">Entry Price</span>
           <span className="font-mono text-foreground">${entryPrice.toFixed(2)}</span>
         </div>
+
         <div className="flex justify-between">
-          <span className="text-muted-foreground">Est. Cost</span>
+          <span className="text-muted-foreground">
+            {direction === "buy" ? "Est. Cost" : "Collateral"}
+          </span>
           <span className="font-mono text-foreground">${estCost.toFixed(2)}</span>
         </div>
+
         <div className="flex justify-between">
-          <span className="text-muted-foreground">Est. Payout</span>
-          <span className="font-mono text-foreground">${estPayout.toFixed(2)}</span>
+          <span className="text-muted-foreground">
+            {direction === "buy" ? "Est. Payout (if correct)" : "Proceeds (short sale)"}
+          </span>
+          <span className="font-mono text-foreground">
+            ${direction === "buy" ? (sizeNum * 1).toFixed(2) : estProceeds.toFixed(2)}
+          </span>
         </div>
       </div>
 
@@ -226,6 +278,7 @@ export default function TradeTicket({ market, onAddToPortfolio, onTradeChange }:
           </div>
           <div className="font-mono font-bold text-primary">${maxGain.toFixed(2)}</div>
         </div>
+
         <div className="bg-accent/10 border border-accent/30 rounded-lg p-3">
           <div className="flex items-center gap-1 mb-1">
             <TrendingDown className="w-3 h-3 text-accent" />
@@ -233,12 +286,14 @@ export default function TradeTicket({ market, onAddToPortfolio, onTradeChange }:
           </div>
           <div className="font-mono font-bold text-accent">${maxLoss.toFixed(2)}</div>
         </div>
+
         <div className="bg-secondary/30 rounded-lg p-3">
-          <div className="text-xs text-muted-foreground mb-1">Breakeven</div>
+          <div className="text-xs text-muted-foreground mb-1">Breakeven (price)</div>
           <div className="font-mono font-bold text-foreground">${breakeven.toFixed(2)}</div>
         </div>
+
         <div className="bg-secondary/30 rounded-lg p-3">
-          <div className="text-xs text-muted-foreground mb-1">ROI</div>
+          <div className="text-xs text-muted-foreground mb-1">ROI (max)</div>
           <div className="font-mono font-bold text-foreground">{roi.toFixed(1)}%</div>
         </div>
       </div>
@@ -258,4 +313,3 @@ export default function TradeTicket({ market, onAddToPortfolio, onTradeChange }:
     </div>
   );
 }
-

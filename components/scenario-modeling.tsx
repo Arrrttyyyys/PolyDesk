@@ -2,7 +2,7 @@
 
 import { Clock, Info } from "lucide-react";
 import { PortfolioLeg } from "@/lib/types";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 interface ScenarioModelingProps {
   legs: PortfolioLeg[];
@@ -21,55 +21,61 @@ export default function ScenarioModeling({ legs, resolutionDate }: ScenarioModel
     );
   }
 
-  // Calculate mark-to-market PnL
+  const totalCost = useMemo(
+    () => legs.reduce((sum, leg) => sum + leg.size * leg.entryPrice, 0),
+    [legs]
+  );
+
+  // Mark-to-market model:
+  // User sets a "target probability" and a "days" horizon.
+  // We assume prices converge toward the target with a half-life.
   const calculateMtMPnL = (prob: number, days: number) => {
-    const price = prob / 100;
+    const targetYes = prob / 100;
+
+    const halfLifeDays = 14;
+    const k = 1 - Math.pow(0.5, Math.max(days, 0) / halfLifeDays); // 0..1
+
     let totalPnL = 0;
 
-    legs.forEach((leg) => {
-      // Simple linear drift assumption
-      const currentPrice = leg.currentMid;
-      const targetPrice = leg.outcome === "yes" ? price : 1 - price;
-      const priceChange = targetPrice - currentPrice;
-      const pnl = leg.side === "buy" 
-        ? leg.size * priceChange 
-        : leg.size * -priceChange;
+    for (const leg of legs) {
+      const current = leg.currentMid;
+      const target = leg.outcome === "yes" ? targetYes : 1 - targetYes;
+
+      // expected exit price after `days`
+      const expectedExit = current + k * (target - current);
+      const priceChange = expectedExit - current;
+
+      const pnl = leg.side === "buy" ? leg.size * priceChange : leg.size * -priceChange;
       totalPnL += pnl;
-    });
+    }
 
     return totalPnL;
   };
 
   const currentPnL = calculateMtMPnL(impliedProbability, daysToResolution);
-  const totalCost = legs.reduce((sum, leg) => sum + leg.size * leg.entryPrice, 0);
   const roi = totalCost > 0 ? (currentPnL / totalCost) * 100 : 0;
 
-  // Generate heatmap data
-  const generateHeatmap = () => {
+  const heatmap = useMemo(() => {
     const days = [7, 14, 30, 60, 90];
     const probs = [10, 20, 30, 40, 50, 60, 70, 80, 90];
-    const heatmap: { day: number; prob: number; roi: number }[] = [];
 
-    days.forEach((day) => {
-      probs.forEach((prob) => {
+    const out: { day: number; prob: number; roi: number }[] = [];
+    for (const day of days) {
+      for (const prob of probs) {
         const pnl = calculateMtMPnL(prob, day);
-        const cost = totalCost;
-        const roiValue = cost > 0 ? (pnl / cost) * 100 : 0;
-        heatmap.push({ day, prob, roi: roiValue });
-      });
-    });
+        const roiValue = totalCost > 0 ? (pnl / totalCost) * 100 : 0;
+        out.push({ day, prob, roi: roiValue });
+      }
+    }
+    return out;
+  }, [legs, totalCost]);
 
-    return heatmap;
-  };
-
-  const heatmap = generateHeatmap();
-
-  const getHeatmapColor = (roi: number) => {
-    if (roi > 20) return "bg-primary/40";
-    if (roi > 10) return "bg-primary/30";
-    if (roi > 0) return "bg-primary/20";
-    if (roi > -10) return "bg-accent/20";
-    if (roi > -20) return "bg-accent/30";
+  const getHeatmapColor = (roiValue: number) => {
+    if (roiValue > 20) return "bg-primary/40";
+    if (roiValue > 10) return "bg-primary/30";
+    if (roiValue > 0) return "bg-primary/20";
+    if (roiValue > -10) return "bg-accent/20";
+    if (roiValue > -20) return "bg-accent/30";
     return "bg-accent/40";
   };
 
@@ -102,6 +108,7 @@ export default function ScenarioModeling({ legs, resolutionDate }: ScenarioModel
             className="w-full"
           />
         </div>
+
         <div>
           <label className="block text-sm text-muted-foreground mb-2">
             Implied Probability: {impliedProbability}%
@@ -125,7 +132,7 @@ export default function ScenarioModeling({ legs, resolutionDate }: ScenarioModel
             : "bg-accent/10 border-accent/30"
         }`}
       >
-        <div className="text-sm text-muted-foreground mb-2">Mark-to-Market PnL</div>
+        <div className="text-sm text-muted-foreground mb-2">Mark-to-Market PnL (expected)</div>
         <div
           className={`text-3xl font-mono font-bold mb-2 ${
             currentPnL >= 0 ? "text-primary" : "text-accent"
@@ -134,7 +141,8 @@ export default function ScenarioModeling({ legs, resolutionDate }: ScenarioModel
           {currentPnL >= 0 ? "+" : ""}${currentPnL.toFixed(2)}
         </div>
         <div className="text-sm text-muted-foreground">
-          ROI: {roi >= 0 ? "+" : ""}{roi.toFixed(1)}%
+          ROI: {roi >= 0 ? "+" : ""}
+          {roi.toFixed(1)}%
         </div>
       </div>
 
@@ -143,7 +151,6 @@ export default function ScenarioModeling({ legs, resolutionDate }: ScenarioModel
         <h4 className="text-sm font-semibold text-foreground mb-3">PnL Sensitivity Heatmap</h4>
         <div className="overflow-x-auto">
           <div className="inline-block min-w-full">
-            {/* Header Row */}
             <div className="grid grid-cols-10 gap-1 mb-1">
               <div className="text-xs text-muted-foreground font-medium p-2"></div>
               {[10, 20, 30, 40, 50, 60, 70, 80, 90].map((prob) => (
@@ -152,21 +159,27 @@ export default function ScenarioModeling({ legs, resolutionDate }: ScenarioModel
                 </div>
               ))}
             </div>
-            {/* Data Rows */}
+
             {[7, 14, 30, 60, 90].map((day) => (
               <div key={day} className="grid grid-cols-10 gap-1 mb-1">
                 <div className="text-xs text-muted-foreground font-medium p-2">{day}d</div>
                 {[10, 20, 30, 40, 50, 60, 70, 80, 90].map((prob) => {
                   const cell = heatmap.find((h) => h.day === day && h.prob === prob);
-                  const roiValue = cell?.roi || 0;
+                  const roiValue = cell?.roi ?? 0;
+
                   return (
                     <div
                       key={prob}
-                      className={`${getHeatmapColor(roiValue)} rounded p-2 text-center cursor-pointer hover:opacity-80 transition-opacity group relative`}
-                      title={`${day}d @ ${prob}%: ${roiValue >= 0 ? "+" : ""}${roiValue.toFixed(1)}% ROI`}
+                      className={`${getHeatmapColor(
+                        roiValue
+                      )} rounded p-2 text-center cursor-pointer hover:opacity-80 transition-opacity group relative`}
+                      title={`${day}d @ ${prob}%: ${roiValue >= 0 ? "+" : ""}${roiValue.toFixed(
+                        1
+                      )}% ROI`}
                     >
                       <div className="text-xs font-mono text-foreground">
-                        {roiValue >= 0 ? "+" : ""}{roiValue.toFixed(0)}%
+                        {roiValue >= 0 ? "+" : ""}
+                        {roiValue.toFixed(0)}%
                       </div>
                     </div>
                   );
@@ -181,11 +194,10 @@ export default function ScenarioModeling({ legs, resolutionDate }: ScenarioModel
       <div className="flex items-start gap-2 p-3 bg-secondary/30 rounded-lg">
         <Info className="w-4 h-4 text-muted-foreground mt-0.5 flex-shrink-0" />
         <p className="text-xs text-muted-foreground italic">
-          Mark-to-market uses midpoint price. Resolution date is modeled, not predicted. Assumes
-          linear probability drift.
+          Mark-to-market uses midpoint price and a simple convergence model (half-life). Resolution
+          timing is a scenario input, not a prediction.
         </p>
       </div>
     </div>
   );
 }
-
