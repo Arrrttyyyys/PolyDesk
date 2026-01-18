@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Activity, RefreshCw } from "lucide-react";
 import { useState, useEffect } from "react";
 
@@ -32,7 +33,9 @@ export default function Header() {
               <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-primary rounded-full pulse-glow border-2 border-background" />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-foreground">PolyDesk Risk Terminal</h1>
+              <h1 className="text-xl font-bold text-foreground">
+                PolyDesk Risk Terminal
+              </h1>
               <p className="text-xs text-muted-foreground">
                 Trade prediction markets with institutional-grade research
               </p>
@@ -43,7 +46,9 @@ export default function Header() {
           <div className="hidden md:flex items-center gap-4">
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/10 border border-primary/30">
               <div className="w-2 h-2 bg-primary rounded-full pulse-glow" />
-              <span className="text-sm font-medium text-primary">Markets Live</span>
+              <span className="text-sm font-medium text-primary">
+                Markets Live
+              </span>
             </div>
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <RefreshCw className="w-4 h-4" />
@@ -53,22 +58,29 @@ export default function Header() {
 
           {/* Right: Navigation */}
           <div className="flex items-center gap-2">
-            <a
+            <Link
               href="/"
-              className="text-xs px-3 py-1.5 rounded-lg bg-secondary/30 text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors"
+              className="rounded-full border border-border/50 px-3 py-1 text-xs text-muted-foreground transition hover:border-primary/40 hover:text-foreground"
             >
               Home
-            </a>
-            <a
+            </Link>
+
+            <Link
+              href="/strategy-lab"
+              className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary transition hover:bg-primary/20"
+            >
+              Strategy Lab
+            </Link>
+
+            <Link
               href="/chatbot"
-              className="text-xs px-3 py-1.5 rounded-lg bg-primary/20 text-primary border border-primary/30 hover:bg-primary/30 transition-colors"
+              className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary transition hover:bg-primary/20"
             >
               Chatbot
-            </a>
+            </Link>
           </div>
         </div>
       </div>
     </header>
   );
 }
-
