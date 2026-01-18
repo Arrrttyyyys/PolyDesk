@@ -137,7 +137,7 @@ export default function TradeTicket({ market, onAddToPortfolio, onTradeChange }:
               : "bg-secondary/30 text-muted-foreground hover:text-foreground"
           }`}
         >
-          YES @ ${market.yesPrice.toFixed(2)}
+          YES @ ${market.yesPrice.toFixed(4).replace(/\.?0+$/, "")}
         </button>
         <button
           onClick={() => setOutcome("no")}
@@ -147,7 +147,7 @@ export default function TradeTicket({ market, onAddToPortfolio, onTradeChange }:
               : "bg-secondary/30 text-muted-foreground hover:text-foreground"
           }`}
         >
-          NO @ ${market.noPrice.toFixed(2)}
+          NO @ ${market.noPrice.toFixed(4).replace(/\.?0+$/, "")}
         </button>
       </div>
 

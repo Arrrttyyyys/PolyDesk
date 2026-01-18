@@ -44,7 +44,7 @@ export default function MarketPanel({
     setIsSearching(true);
     const t = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/market-search?q=${encodeURIComponent(q)}&limit=250`);
+        const res = await fetch(`/api/market-search?q=${encodeURIComponent(q)}&limit=50`);
         if (!res.ok) throw new Error("Search failed");
         const data = await res.json();
         setRemoteResults(data.markets || []);
@@ -70,6 +70,13 @@ export default function MarketPanel({
   const noPrice = selectedMarket?.noPrice || 0;
   const probability = selectedMarket?.probability || 0;
 
+  // Format price to show full precision (up to 4 decimal places)
+  const formatPrice = (price: number): string => {
+    if (price === 0) return "0.0000";
+    // Remove trailing zeros but show up to 4 decimal places
+    return price.toFixed(4).replace(/\.?0+$/, "");
+  };
+
   return (
     <div className="space-y-4">
       {/* Search Box */}
@@ -85,31 +92,51 @@ export default function MarketPanel({
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && dropdownMarkets.length > 0) {
+                e.preventDefault();
                 handleMarketClick(dropdownMarkets[0]);
+              } else if (e.key === "Escape") {
+                setShowDropdown(false);
+                setSearchQuery("");
               }
             }}
-            onFocus={() => setShowDropdown(true)}
+            onFocus={() => {
+              if (dropdownMarkets.length > 0 || searchQuery.trim().length >= 2) {
+                setShowDropdown(true);
+              }
+            }}
             onBlur={() => setTimeout(() => setShowDropdown(false), 200)}
             placeholder={`Search ${domain} markets...`}
-            className="w-full pl-10 pr-4 py-2 bg-input border border-border/50 rounded-lg text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+            className="w-full pl-10 pr-10 py-2 bg-input border border-border/50 rounded-lg text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
           />
+          {isSearching && (
+            <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-primary animate-spin" />
+          )}
         </div>
 
         {/* Dropdown Results */}
         {showDropdown && dropdownMarkets.length > 0 && (
-          <div className="absolute top-full left-0 right-0 mt-2 glass rounded-lg border border-border/50 max-h-60 overflow-y-auto z-10">
-            {dropdownMarkets.map((market) => (
+          <div className="absolute top-full left-0 right-0 mt-2 glass rounded-lg border border-border/50 max-h-80 overflow-y-auto z-10 shadow-xl">
+            {dropdownMarkets.slice(0, 15).map((market, idx) => (
               <button
                 key={market.id}
                 onClick={() => handleMarketClick(market)}
-                className="w-full text-left px-4 py-3 hover:bg-secondary/50 transition-colors border-b border-border/30 last:border-0"
+                className={`w-full text-left px-4 py-3 hover:bg-secondary/50 transition-colors border-b border-border/30 last:border-0 ${
+                  idx === 0 ? "bg-primary/5" : ""
+                }`}
               >
                 <div className="font-medium text-foreground">{market.title}</div>
-                <div className="text-xs text-muted-foreground mt-1">
-                  YES: ${market.yesPrice.toFixed(2)} | NO: ${market.noPrice.toFixed(2)}
+                <div className="text-xs text-muted-foreground mt-1 flex items-center gap-3">
+                  <span>YES: ${formatPrice(market.yesPrice)}</span>
+                  <span>NO: ${formatPrice(market.noPrice)}</span>
+                  {market.volume !== "0" && <span className="text-primary/70">Vol: {market.volume}</span>}
                 </div>
               </button>
             ))}
+            {dropdownMarkets.length > 15 && (
+              <div className="px-4 py-2 text-xs text-muted-foreground text-center border-t border-border/30">
+                Showing top 15 of {dropdownMarkets.length} results
+              </div>
+            )}
           </div>
         )}
         {showDropdown && searchQuery.trim().length >= 2 && dropdownMarkets.length === 0 && (
@@ -136,13 +163,13 @@ export default function MarketPanel({
             <div className="bg-primary/10 border border-primary/30 rounded-lg p-4">
               <div className="text-xs text-muted-foreground mb-1">YES</div>
               <div className="text-2xl font-mono font-bold text-primary">
-                ${yesPrice.toFixed(2)}
+                ${formatPrice(yesPrice)}
               </div>
             </div>
             <div className="bg-accent/10 border border-accent/30 rounded-lg p-4">
               <div className="text-xs text-muted-foreground mb-1">NO</div>
               <div className="text-2xl font-mono font-bold text-accent">
-                ${noPrice.toFixed(2)}
+                ${formatPrice(noPrice)}
               </div>
             </div>
           </div>
@@ -188,11 +215,7 @@ export default function MarketPanel({
             )}
           </button>
         </div>
-      ) : (
-        <div className="glass rounded-xl p-8 text-center">
-          <p className="text-muted-foreground">Select a market to view details</p>
-        </div>
-      )}
+      ) : null}
     </div>
   );
 }

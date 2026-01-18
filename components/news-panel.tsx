@@ -16,6 +16,11 @@ import { domainData } from "@/lib/domain-data";
 interface NewsPanelProps {
   domain: Domain;
   articles: Article[];
+  compressionMetrics: {
+    tokensBefore: number;
+    tokensAfter: number;
+    saved: number;
+  } | null;
   loadingStep: number;
   onGenerateThesis: () => void;
 }
@@ -23,6 +28,7 @@ interface NewsPanelProps {
 export default function NewsPanel({
   domain,
   articles,
+  compressionMetrics,
   loadingStep,
   onGenerateThesis,
 }: NewsPanelProps) {
@@ -117,15 +123,21 @@ export default function NewsPanel({
             </div>
             <div className="bg-secondary/30 rounded-lg p-3">
               <div className="text-xs text-muted-foreground mb-1">Tokens Before</div>
-              <div className="text-xl font-mono font-bold text-foreground">128,450</div>
+              <div className="text-xl font-mono font-bold text-foreground">
+                {compressionMetrics?.tokensBefore.toLocaleString() || "—"}
+              </div>
             </div>
             <div className="bg-secondary/30 rounded-lg p-3">
               <div className="text-xs text-muted-foreground mb-1">Tokens After</div>
-              <div className="text-xl font-mono font-bold text-foreground">12,840</div>
+              <div className="text-xl font-mono font-bold text-foreground">
+                {compressionMetrics?.tokensAfter.toLocaleString() || "—"}
+              </div>
             </div>
             <div className="bg-primary/10 border border-primary/30 rounded-lg p-3">
               <div className="text-xs text-muted-foreground mb-1">Saved</div>
-              <div className="text-xl font-mono font-bold text-primary">90%</div>
+              <div className="text-xl font-mono font-bold text-primary">
+                {compressionMetrics?.saved ? `${compressionMetrics.saved}%` : "—"}
+              </div>
             </div>
           </div>
 

@@ -60,7 +60,7 @@ Provide a JSON response with the following structure:
     if (LLM_PROVIDER === "gemini") {
       // Google Gemini API
       const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${GEMINI_API_KEY}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
         {
           method: "POST",
           headers: {
@@ -75,7 +75,19 @@ Provide a JSON response with the following structure:
 
 ${prompt}
 
-IMPORTANT: Respond ONLY with valid JSON. Do not include any markdown formatting, code blocks, or additional text.`,
+CRITICAL: You MUST respond with ONLY valid JSON. No markdown, no code blocks, no explanatory text before or after. Start with { and end with }. The JSON must match this exact structure:
+{
+  "summary": "string",
+  "evidence": ["string", "string"],
+  "counterpoints": ["string", "string"],
+  "catalysts": {
+    "bullish": ["string"],
+    "bearish": ["string"]
+  },
+  "recommendation": "BUY YES" | "BUY NO" | "WAIT",
+  "confidence": number,
+  "riskLevel": "Low" | "Medium" | "High"
+}`,
                   },
                 ],
               },
@@ -100,22 +112,118 @@ IMPORTANT: Respond ONLY with valid JSON. Do not include any markdown formatting,
       }
 
       const data = await response.json();
-      const content = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      
+      // Log full response for debugging
+      console.log("[GEMINI] Full API response:", JSON.stringify(data, null, 2));
+      
+      // Try multiple ways to get content from Gemini response
+      let content = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      
+      // If responseMimeType is application/json, sometimes the content is directly in data
+      if (!content && typeof data === 'object' && !data.candidates) {
+        // Response might already be parsed JSON
+        thesisData = data;
+        return NextResponse.json(thesisData);
+      }
+      
+      // Fallback: check if content is in other locations
+      if (!content) {
+        content = data.text || data.content || JSON.stringify(data);
+      }
       
       if (!content) {
+        console.error("[GEMINI] No content in response:", JSON.stringify(data, null, 2));
         throw new Error("No content in Gemini response");
       }
 
-      // Parse JSON response
-      try {
-        thesisData = JSON.parse(content);
-      } catch (parseError) {
-        // Try to extract JSON if wrapped in text
-        const jsonMatch = content.match(/\{[\s\S]*\}/);
+      // Parse JSON response - handle various formats
+      let rawContent = typeof content === 'string' ? content.trim() : String(content).trim();
+      
+      console.log("[GEMINI] Raw content preview:", rawContent.substring(0, 300));
+      
+      // Remove markdown code blocks if present
+      rawContent = rawContent.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```\s*$/i, "").trim();
+      
+      // Find the first complete JSON object in the response
+      // Look for { that's not inside quotes and match to the closing }
+      let jsonStart = -1;
+      let braceDepth = 0;
+      let inString = false;
+      let escapeNext = false;
+      
+      for (let i = 0; i < rawContent.length; i++) {
+        const char = rawContent[i];
+        
+        if (escapeNext) {
+          escapeNext = false;
+          continue;
+        }
+        
+        if (char === '\\') {
+          escapeNext = true;
+          continue;
+        }
+        
+        if (char === '"' && !escapeNext) {
+          inString = !inString;
+          continue;
+        }
+        
+        if (!inString) {
+          if (char === '{') {
+            if (jsonStart === -1) {
+              jsonStart = i;
+            }
+            braceDepth++;
+          } else if (char === '}') {
+            braceDepth--;
+            if (jsonStart !== -1 && braceDepth === 0) {
+              // Found complete JSON object
+              rawContent = rawContent.substring(jsonStart, i + 1);
+              break;
+            }
+          }
+        }
+      }
+      
+      // If we didn't find a complete JSON object, try simple regex extraction
+      if (jsonStart === -1 || braceDepth !== 0) {
+        const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
-          thesisData = JSON.parse(jsonMatch[0]);
+          rawContent = jsonMatch[0];
         } else {
-          throw new Error("Could not parse JSON from Gemini response");
+          // Try to find any { and extract from there
+          const firstBrace = rawContent.indexOf('{');
+          if (firstBrace >= 0) {
+            rawContent = rawContent.substring(firstBrace);
+            // Find last } and use everything up to it
+            const lastBrace = rawContent.lastIndexOf('}');
+            if (lastBrace > firstBrace) {
+              rawContent = rawContent.substring(0, lastBrace + 1);
+            }
+          }
+        }
+      }
+      
+      console.log("[GEMINI] Extracted JSON preview:", rawContent.substring(0, 300));
+      
+      // Try to parse as JSON
+      try {
+        thesisData = JSON.parse(rawContent);
+      } catch (parseError) {
+        console.error("[GEMINI] Failed to parse JSON. Extracted content:", rawContent.substring(0, 500));
+        console.error("[GEMINI] Parse error:", parseError);
+        console.error("[GEMINI] Full response data:", JSON.stringify(data, null, 2));
+        
+        // Try to fix common JSON issues
+        try {
+          // Remove any trailing commas before closing braces/brackets
+          rawContent = rawContent.replace(/,(\s*[}\]])/g, '$1');
+          
+          // Try parsing again
+          thesisData = JSON.parse(rawContent);
+        } catch (e) {
+          throw new Error(`Could not parse JSON from Gemini response. Content preview: ${rawContent.substring(0, 200)}. Error: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
     } else if (LLM_PROVIDER === "openai") {
