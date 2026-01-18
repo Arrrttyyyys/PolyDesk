@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AreaChart, Area, XAxis, YAxis, ResponsiveContainer, Tooltip } from "recharts";
 import { PriceHistoryPoint } from "@/lib/types";
 
@@ -51,37 +51,79 @@ function generateSeededHistory(marketId: string): PriceHistoryPoint[] {
 export default function ProbabilityChart({ marketId }: ProbabilityChartProps) {
   const [data, setData] = useState<PriceHistoryPoint[]>([]);
   const [isSimulated, setIsSimulated] = useState(false);
+  const socketRef = useRef<WebSocket | null>(null);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const dataLengthRef = useRef(0);
 
   const fallback = useMemo(() => generateSeededHistory(marketId), [marketId]);
 
   useEffect(() => {
+    dataLengthRef.current = data.length;
+  }, [data.length]);
+
+  useEffect(() => {
     let cancelled = false;
+    let reconnectDelay = 500;
 
-    async function load() {
-      try {
-        const res = await fetch(`/api/price-history?marketId=${encodeURIComponent(marketId)}`);
-        if (!res.ok) throw new Error("no history");
-        const json = await res.json();
+    setData(fallback);
+    setIsSimulated(true);
 
-        if (cancelled) return;
+    const connect = () => {
+      if (cancelled) return;
+      const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+      const wsUrl = `${protocol}://${window.location.host}/ws/price-history?marketId=${encodeURIComponent(
+        marketId
+      )}`;
 
-        if (Array.isArray(json?.history) && json.history.length > 0) {
-          setData(json.history);
-          setIsSimulated(false);
-          return;
+      const socket = new WebSocket(wsUrl);
+      socketRef.current = socket;
+
+      socket.onopen = () => {
+        reconnectDelay = 500;
+      };
+
+      socket.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data as string) as
+            | { type: "history"; history: PriceHistoryPoint[] }
+            | { type: "tick"; point: PriceHistoryPoint };
+
+          if (payload.type === "history") {
+            if (Array.isArray(payload.history) && payload.history.length > 0) {
+              setData(payload.history);
+              setIsSimulated(false);
+            }
+          } else if (payload.type === "tick") {
+            setData((prev) => {
+              const next = [...prev, payload.point];
+              return next.length > 30 ? next.slice(-30) : next;
+            });
+            setIsSimulated(false);
+          }
+        } catch {
+          // Ignore malformed messages.
         }
+      };
 
-        throw new Error("empty history");
-      } catch {
+      socket.onclose = () => {
         if (cancelled) return;
-        setData(fallback);
-        setIsSimulated(true);
-      }
-    }
+        setIsSimulated((current) => current || dataLengthRef.current === 0);
+        reconnectDelay = Math.min(reconnectDelay * 1.5, 5000);
+        reconnectTimerRef.current = window.setTimeout(connect, reconnectDelay);
+      };
 
-    load();
+      socket.onerror = () => {
+        socket.close();
+      };
+    };
+
+    connect();
     return () => {
       cancelled = true;
+      if (reconnectTimerRef.current) {
+        window.clearTimeout(reconnectTimerRef.current);
+      }
+      socketRef.current?.close();
     };
   }, [marketId, fallback]);
 
