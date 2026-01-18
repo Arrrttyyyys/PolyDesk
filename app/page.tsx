@@ -87,13 +87,28 @@ export default function Home() {
         const newMarkets: Market[] = data.markets || [];
         
         // Preserve existing non-zero prices when updating markets
-        // This prevents prices from being reset to 0 when markets are re-fetched
+        // CRITICAL: Check cache FIRST, then prevMarkets
         setAvailableMarkets((prevMarkets) => {
-          const priceMap = new Map(prevMarkets.map(m => [m.id, { yesPrice: m.yesPrice, noPrice: m.noPrice }]));
           return newMarkets.map(newMarket => {
-            const existing = priceMap.get(newMarket.id);
-            // Preserve existing non-zero prices
+            // ALWAYS check cache first - cache is the source of truth
+            const cached = priceCacheRef.current.get(newMarket.id);
+            if (cached && cached.yesPrice > 0) {
+              // Cache has valid prices - ALWAYS use them
+              return {
+                ...newMarket,
+                ...cached,
+              };
+            }
+            
+            // No cache, check prevMarkets
+            const existing = prevMarkets.find(m => m.id === newMarket.id);
             if (existing && existing.yesPrice > 0) {
+              // Store in cache for future reference
+              priceCacheRef.current.set(newMarket.id, {
+                yesPrice: existing.yesPrice,
+                noPrice: existing.noPrice,
+                probability: existing.probability,
+              });
               return {
                 ...newMarket,
                 yesPrice: existing.yesPrice,
@@ -101,6 +116,7 @@ export default function Home() {
                 probability: Math.round(existing.yesPrice * 100),
               };
             }
+            
             return newMarket;
           });
         });
@@ -131,23 +147,52 @@ export default function Home() {
     if (availableMarkets.length > 0 && !selectedMarket) {
       setSelectedMarketSafe(availableMarkets[0]);
     } else if (selectedMarket) {
-      // CRITICAL: Always restore prices from cache if they exist
-      const cached = priceCacheRef.current.get(selectedMarket.id);
-      if (cached && cached.yesPrice > 0) {
-        // Only update if current prices are wrong
-        if (selectedMarket.yesPrice === 0 || selectedMarket.yesPrice !== cached.yesPrice) {
-          setSelectedMarketSafe({ ...selectedMarket, ...cached });
+      // CRITICAL: Check if selectedMarket exists in availableMarkets and restore prices
+      const marketInList = availableMarkets.find(m => m.id === selectedMarket.id);
+      if (marketInList) {
+        // Market is in the list - check cache first, then use marketInList prices
+        const cached = priceCacheRef.current.get(selectedMarket.id);
+        if (cached && cached.yesPrice > 0) {
+          // Cache has valid prices - ALWAYS use them, ignore marketInList prices
+          if (selectedMarket.yesPrice === 0 || selectedMarket.yesPrice !== cached.yesPrice) {
+            setSelectedMarketSafe({ ...selectedMarket, ...cached });
+          }
+        } else if (marketInList.yesPrice > 0) {
+          // No cache, but marketInList has valid prices - store in cache and use
+          priceCacheRef.current.set(selectedMarket.id, {
+            yesPrice: marketInList.yesPrice,
+            noPrice: marketInList.noPrice,
+            probability: marketInList.probability,
+          });
+          if (selectedMarket.yesPrice === 0 || selectedMarket.yesPrice !== marketInList.yesPrice) {
+            setSelectedMarketSafe({ ...selectedMarket, ...marketInList });
+          }
+        } else if (selectedMarket.yesPrice > 0) {
+          // Store existing prices in cache for future reference
+          priceCacheRef.current.set(selectedMarket.id, {
+            yesPrice: selectedMarket.yesPrice,
+            noPrice: selectedMarket.noPrice,
+            probability: selectedMarket.probability,
+          });
         }
-      } else if (selectedMarket.yesPrice > 0) {
-        // Store existing prices in cache for future reference
-        priceCacheRef.current.set(selectedMarket.id, {
-          yesPrice: selectedMarket.yesPrice,
-          noPrice: selectedMarket.noPrice,
-          probability: selectedMarket.probability,
-        });
+      } else {
+        // Market not in list - just check cache
+        const cached = priceCacheRef.current.get(selectedMarket.id);
+        if (cached && cached.yesPrice > 0) {
+          if (selectedMarket.yesPrice === 0 || selectedMarket.yesPrice !== cached.yesPrice) {
+            setSelectedMarketSafe({ ...selectedMarket, ...cached });
+          }
+        } else if (selectedMarket.yesPrice > 0) {
+          // Store existing prices in cache
+          priceCacheRef.current.set(selectedMarket.id, {
+            yesPrice: selectedMarket.yesPrice,
+            noPrice: selectedMarket.noPrice,
+            probability: selectedMarket.probability,
+          });
+        }
       }
     }
-  }, [availableMarkets, selectedMarket]);
+  }, [availableMarkets, selectedMarket, setSelectedMarketSafe]);
 
   // ABSOLUTE LAST RESORT: Watch for price resets and immediately restore from cache
   // This catches ANY case where prices get reset to 0/1
@@ -157,7 +202,11 @@ export default function Home() {
       if (cached && cached.yesPrice > 0) {
         // Prices got reset - IMMEDIATELY restore from cache
         console.warn(`[PRICE PROTECTION] Detected price reset for market ${selectedMarket.id}, restoring from cache:`, cached);
-        setSelectedMarket({ ...selectedMarket, ...cached });
+        // Use setSelectedMarket directly to avoid dependency loops
+        setSelectedMarket((prev) => {
+          if (!prev || prev.id !== selectedMarket.id) return prev;
+          return { ...prev, ...cached };
+        });
       }
     }
   }, [selectedMarket]);
@@ -165,9 +214,18 @@ export default function Home() {
   // Fetch prices for selected market if missing
   useEffect(() => {
     const fetchPricesForMarket = async (market: Market) => {
+      // CRITICAL: Check cache FIRST - if cache has prices, NEVER fetch again
+      const cached = priceCacheRef.current.get(market.id);
+      if (cached && cached.yesPrice > 0) {
+        // Cache has valid prices - NEVER fetch, mark as fetched, and restore prices
+        pricesFetchedRef.current.add(market.id);
+        setSelectedMarketSafe({ ...market, ...cached });
+        return; // NEVER FETCH IF CACHE HAS PRICES
+      }
+      
       // Skip if we've already fetched prices for this market (never fetch again)
       if (pricesFetchedRef.current.has(market.id)) {
-        return;
+        return; // ALREADY FETCHED - NEVER FETCH AGAIN
       }
       
       // Skip if no token IDs
@@ -178,12 +236,18 @@ export default function Home() {
       // Only fetch prices if YES price is 0 (fallback indicator)
       // Once we have a non-zero price, we never check/update it again
       if (market.yesPrice > 0) {
-        // Mark as fetched so we never check again
+        // Mark as fetched so we never check again AND store in cache
         pricesFetchedRef.current.add(market.id);
+        priceCacheRef.current.set(market.id, {
+          yesPrice: market.yesPrice,
+          noPrice: market.noPrice,
+          probability: market.probability,
+        });
         return; // Already have a valid price, never check again
       }
       
-      // Mark as being fetched now (before the API call) to prevent duplicate fetches
+      // Mark as being fetched NOW (before the API call) to prevent duplicate fetches
+      // This MUST happen before any async operation
       pricesFetchedRef.current.add(market.id);
 
       try {
@@ -242,10 +306,25 @@ export default function Home() {
       }
     };
 
+    // CRITICAL: Check cache BEFORE calling fetchPricesForMarket
+    // If cache has prices, NEVER fetch - just restore and mark as fetched
     if (selectedMarket) {
-      fetchPricesForMarket(selectedMarket);
+      const cached = priceCacheRef.current.get(selectedMarket.id);
+      if (cached && cached.yesPrice > 0) {
+        // Cache has valid prices - NEVER fetch, just mark as fetched and restore
+        pricesFetchedRef.current.add(selectedMarket.id);
+        if (selectedMarket.yesPrice === 0 || selectedMarket.yesPrice !== cached.yesPrice) {
+          setSelectedMarketSafe({ ...selectedMarket, ...cached });
+        }
+        return; // NEVER FETCH IF CACHE HAS PRICES
+      }
+      
+      // Only fetch if we haven't fetched before AND no cache exists
+      if (!pricesFetchedRef.current.has(selectedMarket.id)) {
+        fetchPricesForMarket(selectedMarket);
+      }
     }
-  }, [selectedMarket]);
+  }, [selectedMarket, setSelectedMarketSafe]);
 
   const handleFetchResearch = async () => {
     if (!selectedMarket) return;

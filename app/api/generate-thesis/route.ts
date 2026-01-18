@@ -96,7 +96,7 @@ CRITICAL: You MUST respond with ONLY valid JSON. No markdown, no code blocks, no
               temperature: 0.7,
               topK: 40,
               topP: 0.95,
-              maxOutputTokens: 2000,
+              maxOutputTokens: 4000, // Increased to prevent truncation
               responseMimeType: "application/json",
             },
           }),
@@ -215,15 +215,87 @@ CRITICAL: You MUST respond with ONLY valid JSON. No markdown, no code blocks, no
         console.error("[GEMINI] Parse error:", parseError);
         console.error("[GEMINI] Full response data:", JSON.stringify(data, null, 2));
         
-        // Try to fix common JSON issues
+        // Try to fix common JSON issues, especially unterminated strings
         try {
+          let fixedContent = rawContent;
+          
+          // Fix unterminated strings: find strings that aren't closed and close them
+          let fixed = false;
+          let inString = false;
+          let escapeNext = false;
+          let lastQuotePos = -1;
+          
+          for (let i = 0; i < fixedContent.length; i++) {
+            const char = fixedContent[i];
+            
+            if (escapeNext) {
+              escapeNext = false;
+              continue;
+            }
+            
+            if (char === '\\') {
+              escapeNext = true;
+              continue;
+            }
+            
+            if (char === '"') {
+              if (inString) {
+                lastQuotePos = i;
+              }
+              inString = !inString;
+            }
+          }
+          
+          // If we're still in a string at the end, close it
+          if (inString) {
+            // Find the last opening quote for this unterminated string
+            let lastOpenQuote = lastQuotePos;
+            for (let i = fixedContent.length - 1; i >= 0; i--) {
+              if (fixedContent[i] === '"' && (i === 0 || fixedContent[i - 1] !== '\\')) {
+                lastOpenQuote = i;
+                break;
+              }
+            }
+            
+            // Close the string and continue with the JSON structure
+            fixedContent = fixedContent + '"';
+            fixed = true;
+          }
+          
           // Remove any trailing commas before closing braces/brackets
-          rawContent = rawContent.replace(/,(\s*[}\]])/g, '$1');
+          fixedContent = fixedContent.replace(/,(\s*[}\]])/g, '$1');
+          
+          // Count braces and brackets to ensure they're balanced
+          const openBraces = (fixedContent.match(/\{/g) || []).length;
+          const closeBraces = (fixedContent.match(/\}/g) || []).length;
+          const openBrackets = (fixedContent.match(/\[/g) || []).length;
+          const closeBrackets = (fixedContent.match(/\]/g) || []).length;
+          
+          // If we're missing closing brackets, add them (but only if we're at the end)
+          if (openBrackets > closeBrackets) {
+            fixedContent = fixedContent + ']'.repeat(openBrackets - closeBrackets);
+            fixed = true;
+          }
+          
+          // If we're missing closing braces, add them (but only if we're at the end)
+          if (openBraces > closeBraces) {
+            fixedContent = fixedContent + '}'.repeat(openBraces - closeBraces);
+            fixed = true;
+          }
+          
+          if (fixed) {
+            console.log("[GEMINI] Fixed truncated JSON. Fixed content preview:", fixedContent.substring(0, 500));
+          }
           
           // Try parsing again
-          thesisData = JSON.parse(rawContent);
+          thesisData = JSON.parse(fixedContent);
         } catch (e) {
-          throw new Error(`Could not parse JSON from Gemini response. Content preview: ${rawContent.substring(0, 200)}. Error: ${e instanceof Error ? e.message : String(e)}`);
+          // Last resort: try to extract any valid partial JSON structure
+          console.error("[GEMINI] All JSON parsing attempts failed. Error:", e);
+          
+          // Try to return a minimal valid response structure
+          const errorDetails = e instanceof Error ? e.message : String(e);
+          throw new Error(`Could not parse JSON from Gemini response. The response may be truncated. Content preview: ${rawContent.substring(0, 500)}. Error: ${errorDetails}`);
         }
       }
     } else if (LLM_PROVIDER === "openai") {
