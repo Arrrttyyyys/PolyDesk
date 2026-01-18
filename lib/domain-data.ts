@@ -19,6 +19,7 @@ export const domainData: Record<Domain, {
     markets: [
       {
         id: "btc-100k",
+        eventId: "crypto-btc",
         title: "BTC to $100k by June 2024",
         yesPrice: 0.58,
         noPrice: 0.42,
@@ -28,6 +29,7 @@ export const domainData: Record<Domain, {
       },
       {
         id: "eth-etf",
+        eventId: "crypto-eth",
         title: "ETH ETF approved by May 2024",
         yesPrice: 0.72,
         noPrice: 0.28,
@@ -37,6 +39,7 @@ export const domainData: Record<Domain, {
       },
       {
         id: "fed-cut",
+        eventId: "macro-fed",
         title: "Fed cuts rates by 50bp in Q2 2024",
         yesPrice: 0.35,
         noPrice: 0.65,
@@ -46,6 +49,7 @@ export const domainData: Record<Domain, {
       },
       {
         id: "spy-500",
+        eventId: "macro-spy",
         title: "SPY above $500 by end of 2024",
         yesPrice: 0.45,
         noPrice: 0.55,
@@ -107,6 +111,16 @@ export const domainData: Record<Domain, {
       recommendation: "BUY YES",
       confidence: 65,
       riskLevel: "Medium",
+      hedging: {
+        strategies: ["Buy ETH NO as hedge", "Short correlation pairs"],
+        triggers: ["BTC drops below $60k", "ETF outflows exceed $200M/day"],
+        unwindSignals: ["BTC breaks $75k", "ETF inflows resume"],
+      },
+      riskManagement: {
+        takeProfit: ["Take 50% profit at $80k", "Take 25% profit at $90k"],
+        stopLoss: ["Exit if BTC drops below $55k", "Reduce position if volatility spikes above 80%"],
+        timeStops: ["Exit 7 days before resolution", "Reduce position if no movement for 30 days"],
+      },
     },
   },
   news: {
@@ -118,6 +132,7 @@ export const domainData: Record<Domain, {
     markets: [
       {
         id: "trump-2026",
+        eventId: "election-2024",
         title: "Trump wins 2024 election",
         yesPrice: 0.48,
         noPrice: 0.52,
@@ -127,6 +142,7 @@ export const domainData: Record<Domain, {
       },
       {
         id: "recession",
+        eventId: "economy-2024",
         title: "US enters recession in 2024",
         yesPrice: 0.25,
         noPrice: 0.75,
@@ -136,6 +152,7 @@ export const domainData: Record<Domain, {
       },
       {
         id: "taiwan",
+        eventId: "geopolitics-taiwan",
         title: "Taiwan conflict escalates in 2024",
         yesPrice: 0.15,
         noPrice: 0.85,
@@ -189,6 +206,16 @@ export const domainData: Record<Domain, {
       recommendation: "WAIT",
       confidence: 50,
       riskLevel: "High",
+      hedging: {
+        strategies: ["Buy both YES and NO on swing state markets", "Pair with economic indicators"],
+        triggers: ["Poll shifts > 5%", "Major news events"],
+        unwindSignals: ["Clear polling trend emerges", "Within 30 days of election"],
+      },
+      riskManagement: {
+        takeProfit: ["Exit on +20% moves", "Scale out as probability approaches 70%"],
+        stopLoss: ["Exit if fundamentals change", "Stop at -30%"],
+        timeStops: ["Exit 14 days before election", "Reduce position 30 days before election"],
+      },
     },
   },
   sports: {
@@ -200,6 +227,7 @@ export const domainData: Record<Domain, {
     markets: [
       {
         id: "lakers",
+        eventId: "nba-finals-2024",
         title: "Lakers win 2024 NBA Finals",
         yesPrice: 0.22,
         noPrice: 0.78,
@@ -209,6 +237,7 @@ export const domainData: Record<Domain, {
       },
       {
         id: "mcgregor",
+        eventId: "ufc-mcgregor",
         title: "McGregor wins next UFC fight",
         yesPrice: 0.38,
         noPrice: 0.62,
@@ -218,6 +247,7 @@ export const domainData: Record<Domain, {
       },
       {
         id: "chiefs",
+        eventId: "superbowl-lix",
         title: "Chiefs win Super Bowl LIX",
         yesPrice: 0.28,
         noPrice: 0.72,
@@ -271,6 +301,16 @@ export const domainData: Record<Domain, {
       recommendation: "BUY NO",
       confidence: 60,
       riskLevel: "Low",
+      hedging: {
+        strategies: ["Hedge with top seed markets", "Buy opponent YES"],
+        triggers: ["Injury news", "Playoff bracket changes"],
+        unwindSignals: ["Lakers advance to finals", "Season ends"],
+      },
+      riskManagement: {
+        takeProfit: ["Exit if odds shift to 30%+", "Take profit at 25% gain"],
+        stopLoss: ["Exit if team health improves significantly", "Stop at -20%"],
+        timeStops: ["Exit 3 days before finals start", "Reduce position after conference finals"],
+      },
     },
   },
 };
