@@ -177,7 +177,7 @@ export default function MarketPanel({
           {/* Implied Probability */}
           <div className="text-center mb-4">
             <div className="text-5xl font-mono font-bold text-primary text-glow-green">
-              {probability}%
+              {probability > 0 && probability < 1 ? "<1%" : `${probability}%`}
             </div>
             <div className="text-xs text-muted-foreground mt-1">Implied Probability</div>
           </div>
@@ -219,4 +219,3 @@ export default function MarketPanel({
     </div>
   );
 }
-
