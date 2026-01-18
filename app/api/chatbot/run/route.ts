@@ -5,6 +5,14 @@ import { tool_computeMarketMetrics, tool_detectInefficiencies } from "@/lib/agen
 import { tool_suggestHedges } from "@/lib/agent/tools/strategy";
 import { tool_generateTradeDossier } from "@/lib/agent/tools/dossier";
 import { tool_compressText } from "@/lib/agent/tools/compression";
+import { 
+  MarketCard, 
+  Source, 
+  EvidenceGraph, 
+  TradeDossier, 
+  Strategy, 
+  AnalysisBoard 
+} from "@/lib/agent/schemas";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent";
@@ -15,12 +23,12 @@ type Message = {
 };
 
 type UIState = {
-  markets?: any[];
-  sources?: any[];
-  graph?: any;
-  dossier?: any;
-  strategy?: any;
-  analysisBoard?: any;
+  markets?: MarketCard[];
+  sources?: Source[];
+  graph?: EvidenceGraph;
+  dossier?: TradeDossier;
+  strategy?: Strategy;
+  analysisBoard?: AnalysisBoard;
 };
 
 export async function POST(request: NextRequest) {
