@@ -163,27 +163,100 @@ async function fetchOrderbook(tokenId) {
     }
 
     const data = await response.json();
-    const normalizeSide = (side) => {
-      if (Array.isArray(side)) return side;
-      if (side && typeof side === "object") return Object.entries(side);
-      return [];
-    };
-    const rawBids = normalizeSide(data?.bids);
-    const rawAsks = normalizeSide(data?.asks);
+    
+    // Safely extract bids and asks - handle both array and object formats
+    let rawBids = [];
+    let rawAsks = [];
+    
+    // Extract bids
+    if (Array.isArray(data?.bids)) {
+      rawBids = data.bids;
+    } else if (data?.bids && typeof data.bids === 'object') {
+      // If bids is an object, try to extract array from common property names
+      const potentialBids = data.bids.data || data.bids.items || Object.values(data.bids).find(Array.isArray);
+      rawBids = Array.isArray(potentialBids) ? potentialBids : [];
+    }
+    
+    // Extract asks
+    if (Array.isArray(data?.asks)) {
+      rawAsks = data.asks;
+    } else if (data?.asks && typeof data.asks === 'object') {
+      // If asks is an object, try to extract array from common property names
+      const potentialAsks = data.asks.data || data.asks.items || Object.values(data.asks).find(Array.isArray);
+      rawAsks = Array.isArray(potentialAsks) ? potentialAsks : [];
+    }
+    
+    // Final safety check - ensure we always have arrays
+    if (!Array.isArray(rawBids)) {
+      console.warn('[CLOB] bids is not an array:', typeof data?.bids, data?.bids);
+      rawBids = [];
+    }
+    if (!Array.isArray(rawAsks)) {
+      console.warn('[CLOB] asks is not an array:', typeof data?.asks, data?.asks);
+      rawAsks = [];
+    }
 
-    const bidsSorted = rawBids
-      .filter((entry) => Array.isArray(entry) && entry.length >= 2)
-      .map(([price, size]) => [Number(price), Number(size)])
-      .filter(([price, size]) => Number.isFinite(price) && Number.isFinite(size))
-      .sort((a, b) => b[0] - a[0])
-      .slice(0, 5);
+    // Safely map bids - handle cases where items might not be tuples
+    let bidsSorted = [];
+    try {
+      // Double-check that rawBids is iterable before mapping
+      if (Array.isArray(rawBids) && typeof rawBids.map === 'function') {
+        bidsSorted = rawBids
+          .map((item) => {
+            try {
+              // Handle tuple format [price, size]
+              if (Array.isArray(item) && item.length >= 2) {
+                return [Number(item[0]), Number(item[1])];
+              }
+              // Handle object format {price, size}
+              if (item && typeof item === 'object' && ('price' in item || 'priceStr' in item)) {
+                return [Number(item.price || item.priceStr || 0), Number(item.size || item.sizeStr || 0)];
+              }
+              return null;
+            } catch (e) {
+              console.warn('[CLOB] Error mapping bid item:', e, item);
+              return null;
+            }
+          })
+          .filter((item) => item !== null && Number.isFinite(item[0]) && Number.isFinite(item[1]))
+          .sort((a, b) => b[0] - a[0])
+          .slice(0, 5);
+      }
+    } catch (e) {
+      console.error('[CLOB] Error processing bids:', e, 'rawBids type:', typeof rawBids, 'isArray:', Array.isArray(rawBids));
+      bidsSorted = [];
+    }
 
-    const asksSorted = rawAsks
-      .filter((entry) => Array.isArray(entry) && entry.length >= 2)
-      .map(([price, size]) => [Number(price), Number(size)])
-      .filter(([price, size]) => Number.isFinite(price) && Number.isFinite(size))
-      .sort((a, b) => a[0] - b[0])
-      .slice(0, 5);
+    // Safely map asks - handle cases where items might not be tuples
+    let asksSorted = [];
+    try {
+      // Double-check that rawAsks is iterable before mapping
+      if (Array.isArray(rawAsks) && typeof rawAsks.map === 'function') {
+        asksSorted = rawAsks
+          .map((item) => {
+            try {
+              // Handle tuple format [price, size]
+              if (Array.isArray(item) && item.length >= 2) {
+                return [Number(item[0]), Number(item[1])];
+              }
+              // Handle object format {price, size}
+              if (item && typeof item === 'object' && ('price' in item || 'priceStr' in item)) {
+                return [Number(item.price || item.priceStr || 0), Number(item.size || item.sizeStr || 0)];
+              }
+              return null;
+            } catch (e) {
+              console.warn('[CLOB] Error mapping ask item:', e, item);
+              return null;
+            }
+          })
+          .filter((item) => item !== null && Number.isFinite(item[0]) && Number.isFinite(item[1]))
+          .sort((a, b) => a[0] - b[0])
+          .slice(0, 5);
+      }
+    } catch (e) {
+      console.error('[CLOB] Error processing asks:', e, 'rawAsks type:', typeof rawAsks, 'isArray:', Array.isArray(rawAsks));
+      asksSorted = [];
+    }
 
     let bidCumulative = 0;
     const bids = bidsSorted.map(([price, size]) => {

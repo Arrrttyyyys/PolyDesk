@@ -9,6 +9,9 @@ import {
   Loader2,
   CheckCircle2,
   Circle,
+  DollarSign,
+  Gauge,
+  Layers,
 } from "lucide-react";
 import { Domain, Article } from "@/lib/types";
 import { domainData } from "@/lib/domain-data";
@@ -20,6 +23,13 @@ interface NewsPanelProps {
     tokensBefore: number;
     tokensAfter: number;
     saved: number;
+    compressionTime?: number;
+    costSavings?: number;
+    charactersBefore?: number;
+    charactersAfter?: number;
+    compressionRatio?: number;
+    articlesFitBefore?: number;
+    articlesFitAfter?: number;
   } | null;
   loadingStep: number;
   onGenerateThesis: () => void;
@@ -111,9 +121,25 @@ export default function NewsPanel({
       {/* Compression Stats Section */}
       {articles.length > 0 && (
         <div className="glass rounded-xl p-4 glow-green border border-primary/30">
-          <div className="flex items-center gap-2 mb-4">
+          <div className="flex items-center gap-2 mb-3">
             <Zap className="w-5 h-5 text-primary" />
             <h3 className="font-semibold text-foreground">Compression Stats</h3>
+          </div>
+
+          {/* Model Attribution & Settings */}
+          <div className="flex flex-wrap items-center gap-2 mb-4 pb-3 border-b border-primary/10">
+            <span className="text-xs px-2.5 py-1 bg-primary/10 border border-primary/30 rounded text-primary font-medium">
+              bear-1
+            </span>
+            <span className="text-xs px-2.5 py-1 bg-secondary/30 rounded text-muted-foreground">
+              by The Token Company
+            </span>
+            <span className="text-xs px-2.5 py-1 bg-secondary/30 rounded text-muted-foreground">
+              70% aggressiveness
+            </span>
+            <span className="text-xs text-muted-foreground">
+              Compression-first approach: articles compressed before LLM analysis
+            </span>
           </div>
 
           <div className="grid grid-cols-2 gap-3 mb-4">
@@ -141,8 +167,60 @@ export default function NewsPanel({
             </div>
           </div>
 
+          {/* Benefits Section */}
+          {compressionMetrics && (
+            <div className="mt-4 pt-4 border-t border-primary/20">
+              <h4 className="text-sm font-semibold text-foreground mb-3">Benefits</h4>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {/* Cost Savings */}
+                <div className="bg-secondary/20 rounded-lg p-3 border border-primary/10">
+                  <div className="flex items-center gap-2 mb-2">
+                    <DollarSign className="w-4 h-4 text-primary" />
+                    <div className="text-xs text-muted-foreground">Cost Savings</div>
+                  </div>
+                  <div className="text-lg font-mono font-bold text-primary">
+                    ${compressionMetrics.costSavings ? compressionMetrics.costSavings.toFixed(4) : "0.0000"}
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    per research cycle
+                  </div>
+                </div>
+
+                {/* Latency/Performance */}
+                <div className="bg-secondary/20 rounded-lg p-3 border border-primary/10">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Gauge className="w-4 h-4 text-primary" />
+                    <div className="text-xs text-muted-foreground">Compression Speed</div>
+                  </div>
+                  <div className="text-lg font-mono font-bold text-primary">
+                    {compressionMetrics.compressionTime ? `${compressionMetrics.compressionTime.toFixed(2)}ms` : "—"}
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    faster API calls
+                  </div>
+                </div>
+
+                {/* Context Efficiency */}
+                <div className="bg-secondary/20 rounded-lg p-3 border border-primary/10">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Layers className="w-4 h-4 text-primary" />
+                    <div className="text-xs text-muted-foreground">Context Efficiency</div>
+                  </div>
+                  <div className="text-lg font-mono font-bold text-primary">
+                    {compressionMetrics.compressionRatio ? `${compressionMetrics.compressionRatio}:1` : "—"}
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    {compressionMetrics.articlesFitBefore && compressionMetrics.articlesFitAfter
+                      ? `${compressionMetrics.articlesFitBefore} → ${compressionMetrics.articlesFitAfter} articles fit`
+                      : "more articles fit"}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Analysis Angles */}
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2 mt-4">
             {data.angles.map((angle, idx) => (
               <span
                 key={idx}

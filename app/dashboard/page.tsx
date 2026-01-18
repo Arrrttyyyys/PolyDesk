@@ -84,6 +84,13 @@ export default function DashboardPage() {
     tokensBefore: number;
     tokensAfter: number;
     saved: number;
+    compressionTime?: number; // Time in ms
+    costSavings?: number; // Cost saved in USD
+    charactersBefore?: number;
+    charactersAfter?: number;
+    compressionRatio?: number; // Ratio like 10:1
+    articlesFitBefore?: number; // Articles that fit in context window before
+    articlesFitAfter?: number; // Articles that fit in context window after
   } | null>(null);
   const [thesis, setThesis] = useState<Thesis | null>(null);
   const initialTab: TerminalTab = tabFromQuery ?? "position";
@@ -456,6 +463,10 @@ export default function DashboardPage() {
           .map((a: any) => `Title: ${a.title}\n${a.fullContent}`)
           .join("\n\n---\n\n");
 
+        // Calculate characters before compression
+        const charactersBefore = combinedText.length;
+        const startTime = Date.now();
+
         const combinedCompressResponse = await fetch("/api/compress", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -467,11 +478,23 @@ export default function DashboardPage() {
 
         let totalTokensBefore = 0;
         let totalTokensAfter = 0;
+        let compressionTime = Date.now() - startTime;
+        let charactersAfter = 0;
 
         if (combinedCompressResponse.ok) {
           const combinedData = await combinedCompressResponse.json();
           totalTokensBefore = combinedData.tokensBefore || 0;
           totalTokensAfter = combinedData.tokensAfter || 0;
+          // compressionTime from API is typically in seconds, convert to ms
+          compressionTime = combinedData.compressionTime
+            ? (typeof combinedData.compressionTime === 'number' && combinedData.compressionTime < 1000
+                ? combinedData.compressionTime * 1000
+                : combinedData.compressionTime)
+            : compressionTime;
+          // Get characters after from compressed text if available
+          if (combinedData.compressed) {
+            charactersAfter = combinedData.compressed.length;
+          }
         }
 
         // Now compress each article individually for per-article compressed content
@@ -505,11 +528,46 @@ export default function DashboardPage() {
           ? Math.round(((totalTokensBefore - totalTokensAfter) / totalTokensBefore) * 100)
           : 0;
 
+        // Calculate cost savings (Gemini pricing: $1.25/1M input tokens, $5/1M output tokens)
+        // Compression saves on input tokens, so we calculate cost difference
+        const inputCostPer1M = 1.25; // USD per 1M input tokens
+        const outputCostPer1M = 5.0; // USD per 1M output tokens
+        const costBefore = (totalTokensBefore / 1_000_000) * inputCostPer1M;
+        const costAfter = (totalTokensAfter / 1_000_000) * inputCostPer1M; // Still input, just fewer tokens
+        const costSavings = Math.max(0, costBefore - costAfter);
+
+        // Calculate compression ratio (e.g., 10:1 means 10x compression)
+        const compressionRatio = totalTokensAfter > 0
+          ? Number((totalTokensBefore / totalTokensAfter).toFixed(1))
+          : 0;
+
+        // Calculate articles that fit in context window (assuming 1M token context window for Gemini)
+        const contextWindowSize = 1_000_000; // 1M tokens
+        const tokensPerArticle = articlesWithContent.length > 0
+          ? totalTokensBefore / articlesWithContent.length
+          : 0;
+        const articlesFitBefore = tokensPerArticle > 0
+          ? Math.floor(contextWindowSize / tokensPerArticle)
+          : 0;
+        const compressedTokensPerArticle = articlesWithContent.length > 0
+          ? totalTokensAfter / articlesWithContent.length
+          : 0;
+        const articlesFitAfter = compressedTokensPerArticle > 0
+          ? Math.floor(contextWindowSize / compressedTokensPerArticle)
+          : 0;
+
         // Store compression metrics
         setCompressionMetrics({
           tokensBefore: totalTokensBefore,
           tokensAfter: totalTokensAfter,
           saved,
+          compressionTime,
+          costSavings,
+          charactersBefore,
+          charactersAfter: charactersAfter || 0,
+          compressionRatio,
+          articlesFitBefore,
+          articlesFitAfter,
         });
         
         // Update articles with compressed content
