@@ -187,9 +187,9 @@ export default function Home() {
   }, [query, searchEventCards, trendingEvents, category]);
 
   const handleSelectEvent = (event: EventCardData) => {
-    const marketId = event.primaryMarketId;
-    if (!marketId) return;
-    router.push(`/dashboard?marketId=${encodeURIComponent(marketId)}`);
+    // Navigate to dashboard with eventId so we can show all bets in that event
+    // The dashboard will auto-select the first market from this event
+    router.push(`/dashboard?eventId=${encodeURIComponent(event.id)}`);
   };
 
   const handleSearchSubmit = (event: FormEvent<HTMLFormElement>) => {

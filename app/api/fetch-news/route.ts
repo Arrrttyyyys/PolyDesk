@@ -1,8 +1,86 @@
 import { NextRequest, NextResponse } from "next/server";
+import * as cheerio from "cheerio";
 
 // Google Custom Search API for Google News
 const GOOGLE_NEWS_API_KEY = process.env.GOOGLE_NEWS_API_KEY;
 const GOOGLE_NEWS_CX = process.env.GOOGLE_NEWS_CX; // Custom Search Engine ID for news.google.com
+
+/**
+ * Fetch and extract full article content from a URL
+ */
+async function fetchArticleContent(url: string): Promise<string> {
+  try {
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+      },
+      signal: AbortSignal.timeout(10000), // 10 second timeout
+    });
+
+    if (!response.ok) {
+      console.warn(`Failed to fetch article from ${url}: ${response.status}`);
+      return "";
+    }
+
+    const html = await response.text();
+    const $ = cheerio.load(html);
+
+    // Remove script and style elements
+    $("script, style, nav, header, footer, aside, .ad, .advertisement, .sidebar").remove();
+
+    // Try to find article content using common selectors
+    const articleSelectors = [
+      'article',
+      '[role="article"]',
+      '.article-content',
+      '.article-body',
+      '.post-content',
+      '.entry-content',
+      '.content',
+      'main',
+      '.story-body',
+      '.article-text',
+    ];
+
+    let articleText = "";
+
+    // Try each selector
+    for (const selector of articleSelectors) {
+      const $article = $(selector).first();
+      if ($article.length > 0) {
+        articleText = $article.text();
+        if (articleText.length > 500) {
+          // Found substantial content
+          break;
+        }
+      }
+    }
+
+    // Fallback: extract from paragraphs if no article element found
+    if (articleText.length < 500) {
+      const paragraphs = $("p")
+        .map((_, el) => $(el).text())
+        .get()
+        .filter((text) => text.trim().length > 50) // Filter out very short paragraphs
+        .join("\n\n");
+      
+      if (paragraphs.length > articleText.length) {
+        articleText = paragraphs;
+      }
+    }
+
+    // Clean up the text
+    return articleText
+      .replace(/\s+/g, " ") // Normalize whitespace
+      .replace(/\n{3,}/g, "\n\n") // Remove excessive newlines
+      .trim()
+      .substring(0, 50000); // Limit to 50k characters to avoid huge payloads
+
+  } catch (error) {
+    console.warn(`Error fetching article content from ${url}:`, error instanceof Error ? error.message : String(error));
+    return "";
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -24,7 +102,9 @@ export async function POST(request: NextRequest) {
       // Build focused search query - prioritize the actual topic
       const searchQuery = keyTerms;
       
-      const url = `https://www.googleapis.com/customsearch/v1?key=${GOOGLE_NEWS_API_KEY}&cx=${GOOGLE_NEWS_CX}&q=${encodeURIComponent(searchQuery)}&num=${Math.min(limit, 10)}&lr=lang_en`;
+      // Limit to 10 articles for full content fetching
+      const articleLimit = Math.min(limit, 10);
+      const url = `https://www.googleapis.com/customsearch/v1?key=${GOOGLE_NEWS_API_KEY}&cx=${GOOGLE_NEWS_CX}&q=${encodeURIComponent(searchQuery)}&num=${articleLimit}&lr=lang_en`;
 
       const response = await fetch(url);
 
@@ -38,19 +118,35 @@ export async function POST(request: NextRequest) {
 
       const data = await response.json();
 
-      const articles = data.items?.map((item: any, index: number) => ({
+      // First, create article objects with basic info
+      const articlesWithBasicInfo = data.items?.map((item: any, index: number) => ({
         id: `news-${index}-${Date.now()}`,
         title: item.title || "Untitled",
-        // `displayLink` is usually a hostname (not a URL). Prefer it if present.
         source: extractSource(item.displayLink || item.link),
         timestamp: formatTimestamp(item.pagemap?.metatags?.[0]?.["article:published_time"] || new Date().toISOString()),
         relevance: calculateRelevance(item, query),
         compressed: false,
         url: item.link,
         description: item.snippet,
+        fullContent: "", // Will be populated below
       })) || [];
 
-      return NextResponse.json({ articles });
+      // Fetch full content for each article (in parallel, but with rate limiting)
+      console.log(`[FETCH-NEWS] Fetching full content for ${articlesWithBasicInfo.length} articles...`);
+      
+      const articlesWithContent = await Promise.all(
+        articlesWithBasicInfo.map(async (article) => {
+          const fullContent = await fetchArticleContent(article.url);
+          return {
+            ...article,
+            fullContent: fullContent || article.description, // Fallback to snippet if content fetch fails
+          };
+        })
+      );
+
+      console.log(`[FETCH-NEWS] Successfully fetched content for ${articlesWithContent.filter(a => a.fullContent && a.fullContent.length > 500).length} articles`);
+
+      return NextResponse.json({ articles: articlesWithContent });
     }
 
     // Fallback: Return empty array with message

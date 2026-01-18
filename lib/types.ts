@@ -23,6 +23,10 @@ export interface Article {
   timestamp: string;
   relevance: "High" | "Medium" | "Low";
   compressed?: boolean;
+  url?: string;
+  description?: string;
+  fullContent?: string; // Full article content fetched from URL
+  compressedContent?: string; // Compressed version of the article
 }
 
 export interface Thesis {

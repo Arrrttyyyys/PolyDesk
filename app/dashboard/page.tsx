@@ -21,6 +21,7 @@ type TerminalTab = "position" | "portfolio" | "scenarios" | "memo";
 export default function DashboardPage() {
   const searchParams = useSearchParams();
   const marketIdFromQuery = searchParams.get("marketId");
+  const eventIdFromQuery = searchParams.get("eventId");
 
   const [activeDomain, setActiveDomain] = useState<Domain>("markets");
   const [selectedMarket, setSelectedMarket] = useState<Market | null>(null);
@@ -94,25 +95,75 @@ export default function DashboardPage() {
 
   const relatedMarkets = useMemo(() => {
     if (!selectedMarket) return [];
-    return availableMarkets
-      .filter((market) => {
-        if (market.eventId !== selectedMarket.eventId) return false;
-        return parseVolume(market.volume) > 0;
-      })
-      .sort((a, b) => (b.probability ?? 0) - (a.probability ?? 0));
+    
+    const filtered = availableMarkets.filter((market) => {
+      // Filter by same eventId
+      if (market.eventId !== selectedMarket.eventId) return false;
+      // Exclude the currently selected market from the list
+      if (market.id === selectedMarket.id) return false;
+      // Only include markets with volume > 0
+      return parseVolume(market.volume) > 0;
+    });
+    
+    const sorted = filtered.sort((a, b) => (b.probability ?? 0) - (a.probability ?? 0));
+    
+    // Debug logging
+    if (selectedMarket && filtered.length === 0) {
+      console.log("[RELATED] No related markets found:", {
+        selectedMarketId: selectedMarket.id,
+        selectedMarketEventId: selectedMarket.eventId,
+        availableMarketsCount: availableMarkets.length,
+        marketsWithSameEventId: availableMarkets.filter(m => m.eventId === selectedMarket.eventId).length,
+        availableEventIds: [...new Set(availableMarkets.map(m => m.eventId))].slice(0, 5),
+      });
+    }
+    
+    return sorted;
   }, [availableMarkets, selectedMarket]);
 
+  // REMOVED: Auto-selection when relatedMarkets changes
+  // This was causing the first market to auto-select
+  // Now user must manually select a market
+  // useEffect(() => {
+  //   if (!selectedMarket) return;
+  //   if (relatedMarkets.length === 0) return;
+  //   const exists = relatedMarkets.some((market) => market.id === selectedMarket.id);
+  //   if (!exists) {
+  //     setSelectedMarketSafe(relatedMarkets[0]);
+  //   }
+  // }, [relatedMarkets, selectedMarket, setSelectedMarketSafe]);
+
+  // IMPORTANT: Clear selected market on initial mount if no marketIdFromQuery
+  // This ensures position starts empty on page load
   useEffect(() => {
-    if (!selectedMarket) return;
-    if (relatedMarkets.length === 0) return;
-    const exists = relatedMarkets.some((market) => market.id === selectedMarket.id);
-    if (!exists) {
-      setSelectedMarketSafe(relatedMarkets[0]);
+    if (!marketIdFromQuery) {
+      console.log("[MOUNT] Initial mount - clearing selected market (no marketIdFromQuery)");
+      setSelectedMarketSafe(null);
+      setArticles([]);
+      setCompressionMetrics(null);
+      setThesis(null);
+      setPortfolioLegs([]);
     }
-  }, [relatedMarkets, selectedMarket, setSelectedMarketSafe]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Empty dependency array = run once on mount only
 
   // Fetch markets when domain changes
   useEffect(() => {
+    console.log("[INIT] Domain changed or page loaded. marketIdFromQuery:", marketIdFromQuery);
+    
+    // IMPORTANT: Always clear selected market first, unless there's a marketIdFromQuery
+    // This ensures position is empty on initial load
+    if (!marketIdFromQuery) {
+      console.log("[INIT] No marketIdFromQuery - clearing selected market");
+      setSelectedMarketSafe(null);
+      setArticles([]);
+      setCompressionMetrics(null);
+      setThesis(null);
+      setPortfolioLegs([]);
+    } else {
+      console.log("[INIT] marketIdFromQuery found in URL:", marketIdFromQuery);
+    }
+
     const fetchMarkets = async () => {
       const now = Date.now();
       if (marketsFetchInFlightRef.current || now - marketsFetchLastRef.current < 2000) {
@@ -148,11 +199,32 @@ export default function DashboardPage() {
           });
         });
 
+        // Auto-select market based on URL parameters
         if (newMarkets.length > 0) {
-          const match = marketIdFromQuery
-            ? newMarkets.find((market) => market.id === marketIdFromQuery)
-            : null;
-          setSelectedMarketSafe(match ?? newMarkets[0]);
+          // Priority 1: If marketId is specified, use that
+          if (marketIdFromQuery) {
+            const match = newMarkets.find((market) => market.id === marketIdFromQuery);
+            if (match) {
+              console.log("[INIT] Auto-selecting market from URL marketId:", marketIdFromQuery);
+              setSelectedMarketSafe(match);
+            } else {
+              console.warn("[INIT] marketIdFromQuery not found in markets:", marketIdFromQuery);
+            }
+          }
+          // Priority 2: If eventId is specified (from landing page event card), select first market from that event
+          else if (eventIdFromQuery) {
+            const eventMarkets = newMarkets.filter((market) => market.eventId === eventIdFromQuery);
+            if (eventMarkets.length > 0) {
+              // Select the first market with volume, or just the first one
+              const marketToSelect = eventMarkets.find((m) => parseVolume(m.volume) > 0) || eventMarkets[0];
+              console.log("[INIT] Auto-selecting first market from eventId:", eventIdFromQuery, "market:", marketToSelect.id);
+              setSelectedMarketSafe(marketToSelect);
+            } else {
+              console.warn("[INIT] No markets found for eventId:", eventIdFromQuery);
+            }
+          } else {
+            console.log("[INIT] No marketId or eventId - keeping position empty");
+          }
         }
       } catch (error) {
         console.error("Error fetching markets:", error);
@@ -162,22 +234,18 @@ export default function DashboardPage() {
       }
     };
 
-    setSelectedMarketSafe(null);
-    setArticles([]);
-    setCompressionMetrics(null);
-    setThesis(null);
-    setPortfolioLegs([]);
     // Clear price fetch tracking when domain changes
     priceFetchInFlightRef.current.clear();
     priceFetchLastAttemptRef.current.clear();
     fetchMarkets();
-  }, [activeDomain, marketIdFromQuery, setSelectedMarketSafe]);
+  }, [activeDomain, marketIdFromQuery, eventIdFromQuery, setSelectedMarketSafe]);
 
-  // Set default market when markets are loaded
+  // Handle marketIdFromQuery if present (from URL navigation)
   // CRITICAL: Always restore prices from cache before setting selectedMarket
   useEffect(() => {
     if (availableMarkets.length === 0) return;
 
+    // Only auto-select if there's a marketIdFromQuery (from URL)
     if (marketIdFromQuery) {
       const match = availableMarkets.find((market) => market.id === marketIdFromQuery);
       if (match) {
@@ -186,8 +254,9 @@ export default function DashboardPage() {
       }
     }
 
+    // If no selectedMarket, keep it empty (don't auto-select)
+    // Only restore prices if there's already a selectedMarket
     if (!selectedMarket) {
-      setSelectedMarketSafe(availableMarkets[0]);
       return;
     }
 
@@ -357,32 +426,90 @@ export default function DashboardPage() {
       setArticles(newsData.articles || []);
       setLoadingStep(2);
 
-      // Step 3: Compress articles
-      const articleTexts = (newsData.articles || [])
-        .map((a: any) => `${a.title}${a.description ? `. ${a.description}` : ""}`)
-        .join("\n\n");
+      // Step 3: Compress articles (using full content)
+      // Compress each article individually for proper tracking
+      const articlesWithContent = (newsData.articles || []).filter((a: any) => 
+        a.fullContent && a.fullContent.length > 100
+      );
 
-      if (articleTexts) {
-        const compressResponse = await fetch("/api/compress", {
+      if (articlesWithContent.length > 0) {
+        // First, get combined metrics by compressing all together
+        const combinedText = articlesWithContent
+          .map((a: any) => `Title: ${a.title}\n${a.fullContent}`)
+          .join("\n\n---\n\n");
+
+        const combinedCompressResponse = await fetch("/api/compress", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            text: articleTexts,
+            text: combinedText,
             aggressiveness: 0.7,
           }),
         });
 
-        if (compressResponse.ok) {
-          const compressData = await compressResponse.json();
-          // Store compression metrics
-          setCompressionMetrics({
-            tokensBefore: compressData.tokensBefore || 0,
-            tokensAfter: compressData.tokensAfter || 0,
-            saved: compressData.saved || 0,
-          });
-          // Mark articles as compressed
-          setArticles((prev) => prev.map((a) => ({ ...a, compressed: true })));
+        let totalTokensBefore = 0;
+        let totalTokensAfter = 0;
+
+        if (combinedCompressResponse.ok) {
+          const combinedData = await combinedCompressResponse.json();
+          totalTokensBefore = combinedData.tokensBefore || 0;
+          totalTokensAfter = combinedData.tokensAfter || 0;
         }
+
+        // Now compress each article individually for per-article compressed content
+        const compressionPromises = articlesWithContent.map(async (a: any) => {
+          const articleText = `Title: ${a.title}\n${a.fullContent}`;
+          try {
+            const individualResponse = await fetch("/api/compress", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                text: articleText,
+                aggressiveness: 0.7,
+              }),
+            });
+            
+            if (individualResponse.ok) {
+              const individualData = await individualResponse.json();
+              return { article: a, compressed: individualData.compressed };
+            }
+          } catch (err) {
+            console.warn(`Failed to compress article:`, err);
+          }
+          // Fallback to original content if compression fails
+          return { article: a, compressed: a.fullContent || a.description || a.title };
+        });
+
+        const compressedResults = await Promise.all(compressionPromises);
+        
+        // Calculate saved percentage
+        const saved = totalTokensBefore > 0
+          ? Math.round(((totalTokensBefore - totalTokensAfter) / totalTokensBefore) * 100)
+          : 0;
+
+        // Store compression metrics
+        setCompressionMetrics({
+          tokensBefore: totalTokensBefore,
+          tokensAfter: totalTokensAfter,
+          saved,
+        });
+        
+        // Update articles with compressed content
+        setArticles((prev) =>
+          prev.map((a) => {
+            const compressedResult = compressedResults.find((r) => r.article.id === a.id);
+            return {
+              ...a,
+              compressed: true,
+              compressedContent: compressedResult?.compressed || a.fullContent || a.description || a.title,
+            };
+          })
+        );
+      } else {
+        // No full content available, just mark as processed
+        setArticles((prev) =>
+          prev.map((a) => ({ ...a, compressed: true }))
+        );
       }
 
       setLoadingStep(3);
@@ -408,7 +535,16 @@ export default function DashboardPage() {
     };
 
     try {
-      const compressedTexts = articles.map((a) => a.title);
+      // Use compressed content if available, otherwise use full content, fallback to title
+      const compressedTexts = articles.map((a) => {
+        if (a.compressedContent) {
+          return a.compressedContent;
+        }
+        if (a.fullContent && a.fullContent.length > 100) {
+          return `${a.title}\n\n${a.fullContent}`;
+        }
+        return a.title;
+      });
 
       const response = await fetch("/api/generate-thesis", {
         method: "POST",
@@ -544,18 +680,36 @@ export default function DashboardPage() {
               </div>
             </div>
             <div className="divide-y divide-border/50">
-              {relatedMarkets.map((market) => (
+              {relatedMarkets.map((market) => {
+                // Find the full market object from availableMarkets to ensure we have all properties
+                const fullMarket = availableMarkets.find((m) => m.id === market.id) || market;
+                
+                return (
                 <button
                   key={market.id}
-                  onClick={() => {
-                    setSelectedMarketSafe({ ...market });
-                    setArticles([]);
-                    setCompressionMetrics(null);
-                    setThesis(null);
-                    setLoadingStep(-1);
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.log("[CLICK] Selecting market:", fullMarket.id, fullMarket.title);
+                    console.log("[CLICK] Market object:", fullMarket);
+                    try {
+                      setSelectedMarketSafe(fullMarket);
+                      setArticles([]);
+                      setCompressionMetrics(null);
+                      setThesis(null);
+                      setLoadingStep(-1);
+                      console.log("[CLICK] Market selection triggered");
+                    } catch (error) {
+                      console.error("[CLICK] Error selecting market:", error);
+                    }
                   }}
-                  className={`w-full text-left py-3 flex items-center justify-between gap-4 hover:bg-secondary/30 transition-colors ${
-                    selectedMarket.id === market.id ? "bg-secondary/30" : ""
+                  onMouseDown={(e) => {
+                    // Use onMouseDown as a fallback to catch clicks earlier
+                    e.preventDefault();
+                  }}
+                  className={`w-full text-left py-3 flex items-center justify-between gap-4 hover:bg-secondary/30 transition-colors cursor-pointer ${
+                    selectedMarket?.id === market.id ? "bg-secondary/30" : ""
                   }`}
                 >
                   <div>
@@ -570,7 +724,8 @@ export default function DashboardPage() {
                     {market.probability}%
                   </div>
                 </button>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
