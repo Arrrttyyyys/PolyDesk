@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import Header from "@/components/header";
 import DomainSwitcher from "@/components/domain-switcher";
@@ -25,8 +25,12 @@ export default function DashboardPage() {
   const [activeDomain, setActiveDomain] = useState<Domain>("markets");
   const [selectedMarket, setSelectedMarket] = useState<Market | null>(null);
   const [availableMarkets, setAvailableMarkets] = useState<Market[]>([]);
-  // Track which markets have already had prices fetched - never fetch again
-  const pricesFetchedRef = useRef<Set<string>>(new Set());
+  // Track price fetch attempts to avoid hammering the API
+  const priceFetchInFlightRef = useRef<Set<string>>(new Set());
+  const priceFetchLastAttemptRef = useRef<Map<string, number>>(new Map());
+  const noOrderbookCooldownRef = useRef<Map<string, number>>(new Map());
+  const marketsFetchInFlightRef = useRef(false);
+  const marketsFetchLastRef = useRef(0);
   // PERMANENT price cache - stores prices by market ID, never gets cleared
   // This is the source of truth for prices - once set, never changes
   const priceCacheRef = useRef<
@@ -82,9 +86,41 @@ export default function DashboardPage() {
   const [tradeDirection, setTradeDirection] = useState<"buy" | "sell">("buy");
   const [tradeSize, setTradeSize] = useState(0);
 
+  const parseVolume = (value: string) => {
+    const numeric = value.replace(/[^0-9.]/g, "");
+    const parsed = Number(numeric);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  const relatedMarkets = useMemo(() => {
+    if (!selectedMarket) return [];
+    return availableMarkets
+      .filter((market) => {
+        if (market.eventId !== selectedMarket.eventId) return false;
+        return parseVolume(market.volume) > 0;
+      })
+      .sort((a, b) => (b.probability ?? 0) - (a.probability ?? 0));
+  }, [availableMarkets, selectedMarket]);
+
+  useEffect(() => {
+    if (!selectedMarket) return;
+    if (relatedMarkets.length === 0) return;
+    const exists = relatedMarkets.some((market) => market.id === selectedMarket.id);
+    if (!exists) {
+      setSelectedMarketSafe(relatedMarkets[0]);
+    }
+  }, [relatedMarkets, selectedMarket, setSelectedMarketSafe]);
+
   // Fetch markets when domain changes
   useEffect(() => {
     const fetchMarkets = async () => {
+      const now = Date.now();
+      if (marketsFetchInFlightRef.current || now - marketsFetchLastRef.current < 2000) {
+        return;
+      }
+      marketsFetchInFlightRef.current = true;
+      marketsFetchLastRef.current = now;
+
       try {
         const res = await fetch(`/api/markets?limit=250&fetchPrices=false`);
         if (!res.ok) throw new Error("Failed to load markets");
@@ -121,6 +157,8 @@ export default function DashboardPage() {
       } catch (error) {
         console.error("Error fetching markets:", error);
         // Don't reset markets on error - preserve existing state
+      } finally {
+        marketsFetchInFlightRef.current = false;
       }
     };
 
@@ -130,7 +168,8 @@ export default function DashboardPage() {
     setThesis(null);
     setPortfolioLegs([]);
     // Clear price fetch tracking when domain changes
-    pricesFetchedRef.current.clear();
+    priceFetchInFlightRef.current.clear();
+    priceFetchLastAttemptRef.current.clear();
     fetchMarkets();
   }, [activeDomain, marketIdFromQuery, setSelectedMarketSafe]);
 
@@ -188,26 +227,30 @@ export default function DashboardPage() {
   // Fetch prices for selected market if missing
   useEffect(() => {
     const fetchPricesForMarket = async (market: Market) => {
-      // Skip if we've already fetched prices for this market (never fetch again)
-      if (pricesFetchedRef.current.has(market.id)) {
-        return;
-      }
-
       // Skip if no token IDs
       if (!market.clobTokenIds?.yes && !market.clobTokenIds?.no) {
         return;
       }
 
+      const cooldownUntil = noOrderbookCooldownRef.current.get(market.id) ?? 0;
+      if (Date.now() < cooldownUntil) {
+        return;
+      }
+
+      const lastAttempt = priceFetchLastAttemptRef.current.get(market.id) ?? 0;
+      if (priceFetchInFlightRef.current.has(market.id) || Date.now() - lastAttempt < 5000) {
+        return;
+      }
+
+      priceFetchInFlightRef.current.add(market.id);
+      priceFetchLastAttemptRef.current.set(market.id, Date.now());
+
       // Only fetch prices if YES price is 0 (fallback indicator)
       // Once we have a non-zero price, we never check/update it again
       if (market.yesPrice > 0) {
-        // Mark as fetched so we never check again
-        pricesFetchedRef.current.add(market.id);
-        return; // Already have a valid price, never check again
+        priceFetchInFlightRef.current.delete(market.id);
+        return; // Already have a valid price, no need to fetch
       }
-
-      // Mark as being fetched now (before the API call) to prevent duplicate fetches
-      pricesFetchedRef.current.add(market.id);
 
       try {
         const response = await fetch("/api/market-prices", {
@@ -274,9 +317,16 @@ export default function DashboardPage() {
               });
             }
           }
+
+          if (prices?.yesNoOrderbook || prices?.noNoOrderbook) {
+            // Back off longer if this market has no orderbook to avoid hammering
+            noOrderbookCooldownRef.current.set(market.id, Date.now() + 10 * 60 * 1000);
+          }
         }
       } catch (error) {
         console.warn("Failed to fetch prices for market:", error);
+      } finally {
+        priceFetchInFlightRef.current.delete(market.id);
       }
     };
 
@@ -491,6 +541,46 @@ export default function DashboardPage() {
 
       <div className="container mx-auto px-4 py-6">
         <DomainSwitcher activeDomain={activeDomain} onDomainChange={setActiveDomain} />
+
+        {selectedMarket && relatedMarkets.length > 0 && (
+          <div className="glass rounded-xl p-5 mb-6">
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-sm text-muted-foreground">All Bets in This Ticker</div>
+              <div className="text-xs text-muted-foreground">
+                Sorted by implied probability
+              </div>
+            </div>
+            <div className="divide-y divide-border/50">
+              {relatedMarkets.map((market) => (
+                <button
+                  key={market.id}
+                  onClick={() => {
+                    setSelectedMarketSafe({ ...market });
+                    setArticles([]);
+                    setCompressionMetrics(null);
+                    setThesis(null);
+                    setLoadingStep(-1);
+                  }}
+                  className={`w-full text-left py-3 flex items-center justify-between gap-4 hover:bg-secondary/30 transition-colors ${
+                    selectedMarket.id === market.id ? "bg-secondary/30" : ""
+                  }`}
+                >
+                  <div>
+                    <div className="text-sm font-medium text-foreground">
+                      {market.title}
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1">
+                      {market.volume} · {market.resolution || "Resolution TBD"}
+                    </div>
+                  </div>
+                  <div className="text-sm font-semibold text-primary">
+                    {market.probability}%
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         <TerminalTabs activeTab={activeTab} onTabChange={setActiveTab} />
 

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Header from "@/components/header";
-import { type PolymarketEvent } from "@/lib/api/polymarket";
+import { type PolymarketEvent, type PolymarketMarket } from "@/lib/api/polymarket";
 
 type EventCardData = {
   id: string;
@@ -99,6 +99,25 @@ export default function Home() {
     return `${value.slice(0, maxLength - 1).trim()}…`;
   };
 
+  const getYesPrice = (market?: PolymarketMarket) => {
+    if (!market) return -1;
+    if (Array.isArray(market.outcomes) && typeof market.outcomes[0] === "string") {
+      const outcomes = market.outcomes as string[];
+      const prices = Array.isArray(market.outcomePrices) ? market.outcomePrices : [];
+      const yesIdx = outcomes.findIndex((o) => ["yes", "pass", "true"].includes(o.toLowerCase()));
+      if (yesIdx >= 0) {
+        const price = Number(prices[yesIdx]);
+        return Number.isFinite(price) ? price : -1;
+      }
+    } else if (Array.isArray(market.outcomes)) {
+      const outcomes = market.outcomes as { outcome: string; price: string }[];
+      const yes = outcomes.find((o) => ["yes", "pass", "true"].includes(o.outcome?.toLowerCase?.() ?? ""));
+      const price = yes ? Number(yes.price) : NaN;
+      return Number.isFinite(price) ? price : -1;
+    }
+    return -1;
+  };
+
   const mapEventToCard = (event: PolymarketEvent): EventCardData => {
     const tags = (event.tags || [])
       .map((tag) => {
@@ -116,10 +135,13 @@ export default function Home() {
     const markets = event.markets || [];
     const totalVolumeRaw = markets.reduce((sum, market) => sum + parseNumber(market.volume), 0);
     const totalLiquidityRaw = markets.reduce((sum, market) => sum + parseNumber(market.liquidity), 0);
-    const primaryMarket = markets.reduce(
-      (best, market) => (parseNumber(market.volume) >= parseNumber(best.volume) ? market : best),
-      markets[0] ?? ({} as (typeof markets)[number])
-    );
+    const primaryMarket = markets.reduce((best, market) => {
+      const bestYes = getYesPrice(best);
+      const currentYes = getYesPrice(market);
+      if (currentYes > bestYes) return market;
+      if (currentYes === bestYes && parseNumber(market.volume) > parseNumber(best.volume)) return market;
+      return best;
+    }, markets[0] ?? ({} as (typeof markets)[number]));
 
     return {
       id: event.id,

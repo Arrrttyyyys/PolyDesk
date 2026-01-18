@@ -26,6 +26,7 @@ export interface PolymarketMarket {
   liquidity?: string | number;
   volume?: string | number;
   endDate?: string;
+  closed?: boolean;
 }
 
 export interface SearchEventsParams {
@@ -265,6 +266,7 @@ export function mapEventsToMarkets(events: PolymarketEvent[]): Market[] {
               : "0",
         resolution: market.endDate || (event as any).endDate || "",
         probability,
+        closed: Boolean(market.closed ?? event.closed),
         clobTokenIds: {
           yes:
             yesTokenId ||

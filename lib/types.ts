@@ -9,6 +9,7 @@ export interface Market {
   volume: string;
   resolution: string;
   probability: number;
+  closed?: boolean;
   clobTokenIds?: {
     yes?: string;
     no?: string;
