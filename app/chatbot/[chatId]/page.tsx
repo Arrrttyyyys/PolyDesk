@@ -10,11 +10,14 @@ import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { Send, Loader2 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
+import MarketCard from "@/components/chatbot/MarketCard";
+import { Market } from "@/types/market";
 
 interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
+  markets?: Market[];
 }
 
 export default function ChatConversationPage() {
@@ -48,19 +51,42 @@ export default function ChatConversationPage() {
     setIsLoading(true);
 
     try {
-      // Placeholder for API call
-      // TODO: Implement actual API call to /api/chatbot/run
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      // Call the chatbot API
+      const response = await fetch("/api/chatbot/run", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          query: message,
+          action: "search",
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("API request failed");
+      }
+
+      const data = await response.json();
 
       const assistantMessage: Message = {
         id: `assistant-${Date.now()}`,
         role: "assistant",
-        content: "I'm searching Polymarket for relevant markets. This is a placeholder response. The full implementation will connect to the Polymarket API and provide real market data.",
+        content: data.response || "I received your request but couldn't generate a response.",
+        markets: data.markets || [],
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
     } catch (error) {
       console.error("Error sending message:", error);
+      
+      const errorMessage: Message = {
+        id: `assistant-${Date.now()}`,
+        role: "assistant",
+        content: "Sorry, I encountered an error processing your request. Please try again.",
+      };
+      
+      setMessages((prev) => [...prev, errorMessage]);
     } finally {
       setIsLoading(false);
     }
@@ -92,18 +118,28 @@ export default function ChatConversationPage() {
             )}
 
             {messages.map((message) => (
-              <Card
-                key={message.id}
-                className={`${
-                  message.role === "user"
-                    ? "bg-[#1a1a24] border-gray-700 ml-12"
-                    : "bg-[#12121a] border-gray-800 mr-12"
-                }`}
-              >
-                <CardContent className="p-4">
-                  <p className="text-sm text-gray-300">{message.content}</p>
-                </CardContent>
-              </Card>
+              <div key={message.id}>
+                <Card
+                  className={`${
+                    message.role === "user"
+                      ? "bg-[#1a1a24] border-gray-700 ml-12"
+                      : "bg-[#12121a] border-gray-800 mr-12"
+                  }`}
+                >
+                  <CardContent className="p-4">
+                    <p className="text-sm text-gray-300">{message.content}</p>
+                  </CardContent>
+                </Card>
+                
+                {/* Display markets if present */}
+                {message.markets && message.markets.length > 0 && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4 mr-12">
+                    {message.markets.map((market) => (
+                      <MarketCard key={market.id} market={market} />
+                    ))}
+                  </div>
+                )}
+              </div>
             ))}
 
             {isLoading && (
