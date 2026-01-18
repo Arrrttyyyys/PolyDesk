@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Activity, RefreshCw } from "lucide-react";
 import { useState, useEffect } from "react";
 
@@ -51,11 +52,23 @@ export default function Header() {
             </div>
           </div>
 
-          {/* Right: Empty (search and wallet removed) */}
-          <div></div>
+          {/* Right: Navigation */}
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Link
+              href="/"
+              className="rounded-full border border-border/50 px-3 py-1 text-muted-foreground transition hover:border-primary/40 hover:text-foreground"
+            >
+              Markets
+            </Link>
+            <Link
+              href="/strategy-lab"
+              className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-primary transition hover:bg-primary/20"
+            >
+              Strategy Lab
+            </Link>
+          </div>
         </div>
       </div>
     </header>
   );
 }
-
