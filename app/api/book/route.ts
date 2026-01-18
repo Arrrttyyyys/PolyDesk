@@ -7,14 +7,14 @@ type BookLevel = { price: number; size: number; cumulative: number };
 const normalizeSide = (side: unknown): [number, number][] => {
   if (Array.isArray(side)) {
     return side
-      .filter((entry) => Array.isArray(entry) && entry.length >= 2)
-      .map(([price, size]) => [Number(price), Number(size)])
+      .filter((entry): entry is [any, any] => Array.isArray(entry) && entry.length >= 2)
+      .map(([price, size]): [number, number] => [Number(price), Number(size)])
       .filter(([price, size]) => Number.isFinite(price) && Number.isFinite(size));
   }
 
   if (side && typeof side === "object") {
     return Object.entries(side)
-      .map(([price, size]) => [Number(price), Number(size)])
+      .map(([price, size]): [number, number] => [Number(price), Number(size)])
       .filter(([price, size]) => Number.isFinite(price) && Number.isFinite(size));
   }
 
