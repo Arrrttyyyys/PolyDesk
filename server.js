@@ -163,16 +163,23 @@ async function fetchOrderbook(tokenId) {
     }
 
     const data = await response.json();
-    const rawBids = Array.isArray(data?.bids) ? data.bids : [];
-    const rawAsks = Array.isArray(data?.asks) ? data.asks : [];
+    const normalizeSide = (side) => {
+      if (Array.isArray(side)) return side;
+      if (side && typeof side === "object") return Object.entries(side);
+      return [];
+    };
+    const rawBids = normalizeSide(data?.bids);
+    const rawAsks = normalizeSide(data?.asks);
 
     const bidsSorted = rawBids
+      .filter((entry) => Array.isArray(entry) && entry.length >= 2)
       .map(([price, size]) => [Number(price), Number(size)])
       .filter(([price, size]) => Number.isFinite(price) && Number.isFinite(size))
       .sort((a, b) => b[0] - a[0])
       .slice(0, 5);
 
     const asksSorted = rawAsks
+      .filter((entry) => Array.isArray(entry) && entry.length >= 2)
       .map(([price, size]) => [Number(price), Number(size)])
       .filter(([price, size]) => Number.isFinite(price) && Number.isFinite(size))
       .sort((a, b) => a[0] - b[0])
