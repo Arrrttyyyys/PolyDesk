@@ -135,7 +135,7 @@ export async function POST(request: NextRequest) {
       console.log(`[FETCH-NEWS] Fetching full content for ${articlesWithBasicInfo.length} articles...`);
       
       const articlesWithContent = await Promise.all(
-        articlesWithBasicInfo.map(async (article) => {
+        articlesWithBasicInfo.map(async (article: any) => {
           const fullContent = await fetchArticleContent(article.url);
           return {
             ...article,
