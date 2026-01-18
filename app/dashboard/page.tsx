@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import Header from "@/components/header";
 import DomainSwitcher from "@/components/domain-switcher";
 import TerminalTabs from "@/components/terminal-tabs";
@@ -14,14 +14,18 @@ import PortfolioPayoffChart from "@/components/portfolio-payoff-chart";
 import ScenarioModeling from "@/components/scenario-modeling";
 import TradeMemoBuilder from "@/components/trade-memo-builder";
 import CopilotPanel from "@/components/copilot-panel";
+import TradeDossier from "@/components/trade-dossier";
 import { Domain, Market, Article, PortfolioLeg, Thesis } from "@/lib/types";
 
-type TerminalTab = "position" | "portfolio" | "scenarios" | "memo";
+type TerminalTab = "position" | "portfolio" | "scenarios" | "memo" | "dossier";
 
 export default function DashboardPage() {
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
   const marketIdFromQuery = searchParams.get("marketId");
   const eventIdFromQuery = searchParams.get("eventId");
+  const tabFromQuery = searchParams.get("tab") as TerminalTab | null;
 
   const [activeDomain, setActiveDomain] = useState<Domain>("markets");
   const [selectedMarket, setSelectedMarket] = useState<Market | null>(null);
@@ -82,10 +86,24 @@ export default function DashboardPage() {
     saved: number;
   } | null>(null);
   const [thesis, setThesis] = useState<Thesis | null>(null);
-  const [activeTab, setActiveTab] = useState<TerminalTab>("position");
+  const initialTab: TerminalTab = tabFromQuery ?? "position";
+  const [activeTab, setActiveTab] = useState<TerminalTab>(initialTab);
   const [portfolioLegs, setPortfolioLegs] = useState<PortfolioLeg[]>([]);
   const [tradeDirection, setTradeDirection] = useState<"buy" | "sell">("buy");
   const [tradeSize, setTradeSize] = useState(0);
+
+  useEffect(() => {
+    if (tabFromQuery && tabFromQuery !== activeTab) {
+      setActiveTab(tabFromQuery);
+    }
+  }, [tabFromQuery, activeTab]);
+
+  const handleTabChange = (tab: TerminalTab) => {
+    setActiveTab(tab);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("tab", tab);
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  };
 
   const parseVolume = (value: string) => {
     const numeric = value.replace(/[^0-9.]/g, "");
@@ -730,7 +748,7 @@ export default function DashboardPage() {
           </div>
         )}
 
-        <TerminalTabs activeTab={activeTab} onTabChange={setActiveTab} />
+        <TerminalTabs activeTab={activeTab} onTabChange={handleTabChange} />
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* Left Column */}
@@ -791,6 +809,9 @@ export default function DashboardPage() {
                 legs={portfolioLegs}
                 resolutionDate={selectedMarket?.resolution}
               />
+            )}
+            {activeTab === "dossier" && (
+              <TradeDossier market={selectedMarket} articles={articles} />
             )}
             {activeTab === "memo" && <TradeMemoBuilder legs={portfolioLegs} />}
           </div>

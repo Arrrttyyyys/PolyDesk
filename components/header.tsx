@@ -51,8 +51,21 @@ export default function Header() {
             </div>
           </div>
 
-          {/* Right: Empty (search and wallet removed) */}
-          <div></div>
+          {/* Right: Navigation */}
+          <div className="flex items-center gap-2">
+            <a
+              href="/"
+              className="text-xs px-3 py-1.5 rounded-lg bg-secondary/30 text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors"
+            >
+              Home
+            </a>
+            <a
+              href="/chatbot"
+              className="text-xs px-3 py-1.5 rounded-lg bg-primary/20 text-primary border border-primary/30 hover:bg-primary/30 transition-colors"
+            >
+              Chatbot
+            </a>
+          </div>
         </div>
       </div>
     </header>

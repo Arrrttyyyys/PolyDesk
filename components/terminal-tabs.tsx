@@ -1,8 +1,8 @@
 "use client";
 
-import { Briefcase, LineChart, Clock, FileText } from "lucide-react";
+import { Briefcase, LineChart, Clock, FileText, BookOpen } from "lucide-react";
 
-type TerminalTab = "position" | "portfolio" | "scenarios" | "memo";
+type TerminalTab = "position" | "portfolio" | "scenarios" | "memo" | "dossier";
 
 interface TerminalTabsProps {
   activeTab: TerminalTab;
@@ -13,6 +13,7 @@ const tabs: { id: TerminalTab; label: string; icon: typeof Briefcase }[] = [
   { id: "position", label: "Position", icon: Briefcase },
   { id: "portfolio", label: "Portfolio", icon: LineChart },
   { id: "scenarios", label: "Scenarios", icon: Clock },
+  { id: "dossier", label: "Dossier", icon: BookOpen },
   { id: "memo", label: "Trade Memo", icon: FileText },
 ];
 
