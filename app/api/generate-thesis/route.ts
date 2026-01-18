@@ -50,6 +50,16 @@ Provide a JSON response with the following structure:
     "bullish": ["bullish trigger 1", "bullish trigger 2"],
     "bearish": ["bearish trigger 1", "bearish trigger 2"]
   },
+  "hedging": {
+    "strategies": ["hedge 1", "hedge 2"],
+    "triggers": ["trigger 1", "trigger 2"],
+    "unwindSignals": ["signal 1", "signal 2"]
+  },
+  "riskManagement": {
+    "takeProfit": ["take profit 1", "take profit 2"],
+    "stopLoss": ["stop loss 1", "stop loss 2"],
+    "timeStops": ["time stop 1", "time stop 2"]
+  },
   "recommendation": "BUY YES" | "BUY NO" | "WAIT",
   "confidence": 0-100,
   "riskLevel": "Low" | "Medium" | "High"
@@ -60,7 +70,7 @@ Provide a JSON response with the following structure:
     if (LLM_PROVIDER === "gemini") {
       // Google Gemini API
       const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${GEMINI_API_KEY}`,
         {
           method: "POST",
           headers: {
@@ -83,6 +93,16 @@ CRITICAL: You MUST respond with ONLY valid JSON. No markdown, no code blocks, no
   "catalysts": {
     "bullish": ["string"],
     "bearish": ["string"]
+  },
+  "hedging": {
+    "strategies": ["string"],
+    "triggers": ["string"],
+    "unwindSignals": ["string"]
+  },
+  "riskManagement": {
+    "takeProfit": ["string"],
+    "stopLoss": ["string"],
+    "timeStops": ["string"]
   },
   "recommendation": "BUY YES" | "BUY NO" | "WAIT",
   "confidence": number,

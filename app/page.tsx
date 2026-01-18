@@ -1,593 +1,296 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useRouter } from "next/navigation";
 import Header from "@/components/header";
-import DomainSwitcher from "@/components/domain-switcher";
-import TerminalTabs from "@/components/terminal-tabs";
-import MarketPanel from "@/components/market-panel";
-import TradeTicket from "@/components/trade-ticket";
-import OrderbookLadder from "@/components/orderbook-ladder";
-import NewsPanel from "@/components/news-panel";
-import PortfolioTable from "@/components/portfolio-table";
-import PortfolioPayoffChart from "@/components/portfolio-payoff-chart";
-import ScenarioModeling from "@/components/scenario-modeling";
-import TradeMemoBuilder from "@/components/trade-memo-builder";
-import CopilotPanel from "@/components/copilot-panel";
-import { Domain, Market, Article, PortfolioLeg, Thesis } from "@/lib/types";
+import { type PolymarketEvent } from "@/lib/api/polymarket";
 
-type TerminalTab = "position" | "portfolio" | "scenarios" | "memo";
+type EventCardData = {
+  id: string;
+  title: string;
+  description?: string;
+  imageUrl?: string;
+  tags: string[];
+  totalVolumeRaw: number;
+  totalLiquidityRaw: number;
+  primaryMarketId?: string;
+};
 
 export default function Home() {
-  const [activeDomain, setActiveDomain] = useState<Domain>("markets");
-  const [selectedMarket, setSelectedMarket] = useState<Market | null>(null);
-  const [availableMarkets, setAvailableMarkets] = useState<Market[]>([]);
-  // Track which markets have already had prices fetched - never fetch again
-  const pricesFetchedRef = useRef<Set<string>>(new Set());
-  // PERMANENT price cache - stores prices by market ID, never gets cleared
-  // This is the source of truth for prices - once set, never changes
-  const priceCacheRef = useRef<Map<string, { yesPrice: number; noPrice: number; probability: number }>>(new Map());
+  const router = useRouter();
+  const [events, setEvents] = useState<PolymarketEvent[]>([]);
+  const [searchEvents, setSearchEvents] = useState<PolymarketEvent[]>([]);
+  const [query, setQuery] = useState("");
+  const [category, setCategory] = useState("all");
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSearching, setIsSearching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // CRITICAL: Wrapper function that ALWAYS preserves prices from cache
-  // NEVER call setSelectedMarket directly - always use this wrapper
-  const setSelectedMarketSafe = useCallback((market: Market | null | ((prev: Market | null) => Market | null)) => {
-    if (market === null) {
-      setSelectedMarket(null);
-      return;
-    }
-
-    const marketToSet = typeof market === 'function' 
-      ? market(selectedMarket)
-      : market;
-
-    if (!marketToSet) {
-      setSelectedMarket(null);
-      return;
-    }
-
-    // ALWAYS check cache first - cache is the source of truth
-    const cached = priceCacheRef.current.get(marketToSet.id);
-    
-    if (cached && cached.yesPrice > 0) {
-      // Cache has valid prices - ALWAYS use them, ignore incoming prices
-      setSelectedMarket({ ...marketToSet, ...cached });
-    } else if (marketToSet.yesPrice > 0) {
-      // No cache, but incoming market has valid prices - store in cache and use
-      priceCacheRef.current.set(marketToSet.id, {
-        yesPrice: marketToSet.yesPrice,
-        noPrice: marketToSet.noPrice,
-        probability: marketToSet.probability,
-      });
-      setSelectedMarket(marketToSet);
-    } else {
-      // Incoming market has no prices - just set it (will fetch prices later)
-      setSelectedMarket(marketToSet);
-    }
-  }, [selectedMarket]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [loadingStep, setLoadingStep] = useState(-1);
-  const [articles, setArticles] = useState<Article[]>([]);
-  const [compressionMetrics, setCompressionMetrics] = useState<{
-    tokensBefore: number;
-    tokensAfter: number;
-    saved: number;
-  } | null>(null);
-  const [thesis, setThesis] = useState<Thesis | null>(null);
-  const [activeTab, setActiveTab] = useState<TerminalTab>("position");
-  const [portfolioLegs, setPortfolioLegs] = useState<PortfolioLeg[]>([]);
-  const [tradeDirection, setTradeDirection] = useState<"buy" | "sell">("buy");
-  const [tradeSize, setTradeSize] = useState(0);
-
-  // Fetch markets when domain changes
   useEffect(() => {
-    const fetchMarkets = async () => {
+    const loadTrending = async () => {
       try {
-        const res = await fetch(`/api/markets?limit=250&fetchPrices=false`);
+        setIsLoading(true);
+        setError(null);
+        const res = await fetch("/api/events?limit=250");
         if (!res.ok) throw new Error("Failed to load markets");
         const data = await res.json();
-        const newMarkets: Market[] = data.markets || [];
-        
-        // Preserve existing non-zero prices when updating markets
-        // This prevents prices from being reset to 0 when markets are re-fetched
-        setAvailableMarkets((prevMarkets) => {
-          const priceMap = new Map(prevMarkets.map(m => [m.id, { yesPrice: m.yesPrice, noPrice: m.noPrice }]));
-          return newMarkets.map(newMarket => {
-            const existing = priceMap.get(newMarket.id);
-            // Preserve existing non-zero prices
-            if (existing && existing.yesPrice > 0) {
-              return {
-                ...newMarket,
-                yesPrice: existing.yesPrice,
-                noPrice: existing.noPrice,
-                probability: Math.round(existing.yesPrice * 100),
-              };
-            }
-            return newMarket;
-          });
-        });
-
-        // Set first market as selected if none selected
-        if (newMarkets.length > 0 && !selectedMarket) {
-          setSelectedMarketSafe(newMarkets[0]);
-        }
-      } catch (error) {
-        console.error("Error fetching markets:", error);
-        // Don't reset markets on error - preserve existing state
-      }
-    };
-
-    fetchMarkets();
-    setSelectedMarketSafe(null);
-    setArticles([]);
-    setCompressionMetrics(null);
-    setThesis(null);
-    setPortfolioLegs([]);
-    // Clear price fetch tracking when domain changes
-    pricesFetchedRef.current.clear();
-  }, [activeDomain]);
-
-  // Set default market when markets are loaded
-  // CRITICAL: Always restore prices from cache before setting selectedMarket
-  useEffect(() => {
-    if (availableMarkets.length > 0 && !selectedMarket) {
-      setSelectedMarketSafe(availableMarkets[0]);
-    } else if (selectedMarket) {
-      // CRITICAL: Always restore prices from cache if they exist
-      const cached = priceCacheRef.current.get(selectedMarket.id);
-      if (cached && cached.yesPrice > 0) {
-        // Only update if current prices are wrong
-        if (selectedMarket.yesPrice === 0 || selectedMarket.yesPrice !== cached.yesPrice) {
-          setSelectedMarketSafe({ ...selectedMarket, ...cached });
-        }
-      } else if (selectedMarket.yesPrice > 0) {
-        // Store existing prices in cache for future reference
-        priceCacheRef.current.set(selectedMarket.id, {
-          yesPrice: selectedMarket.yesPrice,
-          noPrice: selectedMarket.noPrice,
-          probability: selectedMarket.probability,
-        });
-      }
-    }
-  }, [availableMarkets, selectedMarket]);
-
-  // ABSOLUTE LAST RESORT: Watch for price resets and immediately restore from cache
-  // This catches ANY case where prices get reset to 0/1
-  useEffect(() => {
-    if (selectedMarket && selectedMarket.yesPrice === 0) {
-      const cached = priceCacheRef.current.get(selectedMarket.id);
-      if (cached && cached.yesPrice > 0) {
-        // Prices got reset - IMMEDIATELY restore from cache
-        console.warn(`[PRICE PROTECTION] Detected price reset for market ${selectedMarket.id}, restoring from cache:`, cached);
-        setSelectedMarket({ ...selectedMarket, ...cached });
-      }
-    }
-  }, [selectedMarket]);
-
-  // Fetch prices for selected market if missing
-  useEffect(() => {
-    const fetchPricesForMarket = async (market: Market) => {
-      // Skip if we've already fetched prices for this market (never fetch again)
-      if (pricesFetchedRef.current.has(market.id)) {
-        return;
-      }
-      
-      // Skip if no token IDs
-      if (!market.clobTokenIds?.yes && !market.clobTokenIds?.no) {
-        return;
-      }
-
-      // Only fetch prices if YES price is 0 (fallback indicator)
-      // Once we have a non-zero price, we never check/update it again
-      if (market.yesPrice > 0) {
-        // Mark as fetched so we never check again
-        pricesFetchedRef.current.add(market.id);
-        return; // Already have a valid price, never check again
-      }
-      
-      // Mark as being fetched now (before the API call) to prevent duplicate fetches
-      pricesFetchedRef.current.add(market.id);
-
-      try {
-        const response = await fetch("/api/market-prices", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            yesTokenId: market.clobTokenIds.yes,
-            noTokenId: market.clobTokenIds.no,
-          }),
-        });
-
-        if (response.ok) {
-          const prices = await response.json();
-          
-          // Calculate new prices
-          const newYesPrice = prices.yesPrice > 0 ? prices.yesPrice : (prices.noPrice > 0 ? 1 - prices.noPrice : null);
-          const newNoPrice = prices.noPrice > 0 ? prices.noPrice : (prices.yesPrice > 0 ? 1 - prices.yesPrice : null);
-          
-          // Only update if we got a valid non-zero YES price
-          // Preserve existing non-zero prices - never overwrite with 0
-          if (newYesPrice && newYesPrice > 0) {
-            // Store prices in permanent cache FIRST (before any state updates)
-            const finalYesPrice = newYesPrice > 0 ? newYesPrice : 0;
-            const finalNoPrice = newNoPrice && newNoPrice > 0 ? newNoPrice : (finalYesPrice > 0 ? 1 - finalYesPrice : 0.5);
-            const finalProbability = finalYesPrice > 0 ? Math.round(finalYesPrice * 100) : 50;
-            
-            priceCacheRef.current.set(market.id, {
-              yesPrice: finalYesPrice,
-              noPrice: finalNoPrice,
-              probability: finalProbability,
-            });
-            
-            // Update the market in availableMarkets
-            setAvailableMarkets((prev) =>
-              prev.map((m) => {
-                if (m.id !== market.id) return m;
-                // Use prices from cache (guaranteed to be set above)
-                const cached = priceCacheRef.current.get(market.id);
-                return cached ? { ...m, ...cached } : m;
-              })
-            );
-            
-            // Update selected market using safe wrapper
-            const cached = priceCacheRef.current.get(market.id);
-            if (cached) {
-              setSelectedMarketSafe((prev) => {
-                if (!prev || prev.id !== market.id) return prev;
-                return { ...prev, ...cached };
-              });
-            }
-          }
-        }
-      } catch (error) {
-        console.warn("Failed to fetch prices for market:", error);
-      }
-    };
-
-    if (selectedMarket) {
-      fetchPricesForMarket(selectedMarket);
-    }
-  }, [selectedMarket]);
-
-  const handleFetchResearch = async () => {
-    if (!selectedMarket) return;
-
-    setIsLoading(true);
-    setLoadingStep(0);
-
-    try {
-      // Step 1: Fetch market data (already have it)
-      setLoadingStep(1);
-
-      // Step 2: Fetch news articles
-      const newsResponse = await fetch("/api/fetch-news", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          query: selectedMarket.title,
-          domain: activeDomain,
-          limit: 30,
-        }),
-      });
-
-      if (!newsResponse.ok) {
-        throw new Error("Failed to fetch news");
-      }
-
-      const newsData = await newsResponse.json();
-      setArticles(newsData.articles || []);
-      setLoadingStep(2);
-
-      // Step 3: Compress articles
-      const articleTexts = (newsData.articles || []).map((a: any) => 
-        `${a.title}${a.description ? `. ${a.description}` : ""}`
-      ).join("\n\n");
-
-      if (articleTexts) {
-        const compressResponse = await fetch("/api/compress", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            text: articleTexts,
-            aggressiveness: 0.7,
-          }),
-        });
-
-        if (compressResponse.ok) {
-          const compressData = await compressResponse.json();
-          // Store compression metrics
-          setCompressionMetrics({
-            tokensBefore: compressData.tokensBefore || 0,
-            tokensAfter: compressData.tokensAfter || 0,
-            saved: compressData.saved || 0,
-          });
-          // Mark articles as compressed
-          setArticles((prev) =>
-            prev.map((a) => ({ ...a, compressed: true }))
-          );
-        }
-      }
-
-      setLoadingStep(3);
-
-      // Step 4: Generate thesis (optional if Gemini key isn't configured yet)
-      // CRITICAL: Store current prices before thesis generation to preserve them
-      const currentPrices = selectedMarket ? {
-        id: selectedMarket.id,
-        yesPrice: selectedMarket.yesPrice,
-        noPrice: selectedMarket.noPrice,
-      } : null;
-      
-      try {
-        const compressedTexts = (newsData.articles || []).map((a: any) => a.title);
-
-        const thesisResponse = await fetch("/api/generate-thesis", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            market: selectedMarket,
-            compressedArticles: compressedTexts,
-            domain: activeDomain,
-          }),
-        });
-
-        if (thesisResponse.ok) {
-          const thesisData = await thesisResponse.json();
-          
-          // CRITICAL: Store prices in permanent cache BEFORE setting thesis
-          if (currentPrices && currentPrices.yesPrice > 0) {
-            priceCacheRef.current.set(currentPrices.id, {
-              yesPrice: currentPrices.yesPrice,
-              noPrice: currentPrices.noPrice,
-              probability: Math.round(currentPrices.yesPrice * 100),
-            });
-          }
-          
-          // CRITICAL: Restore prices from cache BEFORE setting thesis
-          if (currentPrices) {
-            const cached = priceCacheRef.current.get(currentPrices.id);
-            if (cached && cached.yesPrice > 0) {
-              setSelectedMarketSafe((prev) => {
-                if (!prev || prev.id !== currentPrices.id) return prev;
-                return { ...prev, ...cached };
-              });
-            }
-          }
-          
-          setThesis(thesisData);
-          
-          // CRITICAL: Restore prices from cache AFTER setting thesis
-          setTimeout(() => {
-            if (currentPrices) {
-              const cached = priceCacheRef.current.get(currentPrices.id);
-              if (cached && cached.yesPrice > 0) {
-                setSelectedMarketSafe((prev) => {
-                  if (!prev || prev.id !== currentPrices.id) return prev;
-                  // Force restore if price is 0 or different
-                  if (prev.yesPrice === 0 || prev.yesPrice !== cached.yesPrice) {
-                    return { ...prev, ...cached };
-                  }
-                  return prev;
-                });
-              }
-            }
-          }, 0);
-        } else {
-          const errText = await thesisResponse.text();
-          console.warn("Thesis generation skipped/failed:", errText);
-          setThesis(null);
-        }
+        setEvents(data.events || []);
       } catch (err) {
-        console.warn("Thesis generation skipped/failed:", err);
-        setThesis(null);
+        console.error("Error loading markets:", err);
+        setError("Unable to load trending markets right now.");
       } finally {
-        // Mark pipeline as finished so UI unlocks next actions
-        setLoadingStep(4);
+        setIsLoading(false);
       }
-    } catch (error) {
-      console.error("Error fetching research:", error);
-      // On error, still show what we have
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleGenerateThesis = async () => {
-    if (!selectedMarket || articles.length === 0) return;
-
-    // Store current market prices before API call to preserve them on error
-    const currentMarketPrices = {
-      id: selectedMarket.id,
-      yesPrice: selectedMarket.yesPrice,
-      noPrice: selectedMarket.noPrice,
     };
 
-    try {
-      const compressedTexts = articles.map((a) => a.title);
-      
-      const response = await fetch("/api/generate-thesis", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          market: selectedMarket,
-          compressedArticles: compressedTexts,
-          domain: activeDomain,
-        }),
-      });
-
-      if (response.ok) {
-        const thesisData = await response.json();
-        
-        // CRITICAL: Store prices in cache BEFORE setting thesis (permanent storage)
-        if (currentMarketPrices.yesPrice > 0) {
-          priceCacheRef.current.set(currentMarketPrices.id, {
-            yesPrice: currentMarketPrices.yesPrice,
-            noPrice: currentMarketPrices.noPrice,
-            probability: Math.round(currentMarketPrices.yesPrice * 100),
-          });
-        }
-        
-        // CRITICAL: Restore prices from cache BEFORE setting thesis
-        const cachedPrices = priceCacheRef.current.get(currentMarketPrices.id);
-        if (cachedPrices && cachedPrices.yesPrice > 0) {
-          setSelectedMarket((prev) => {
-            if (!prev || prev.id !== currentMarketPrices.id) return prev;
-            return { ...prev, ...cachedPrices };
-          });
-        }
-        
-        setThesis(thesisData);
-        
-        // CRITICAL: Restore prices from cache AFTER setting thesis (guaranteed restore)
-        setTimeout(() => {
-          const cached = priceCacheRef.current.get(currentMarketPrices.id);
-          if (cached && cached.yesPrice > 0) {
-            setSelectedMarketSafe((prev) => {
-              if (!prev || prev.id !== currentMarketPrices.id) return prev;
-              // Force restore from cache - never trust state if cache has valid price
-              if (prev.yesPrice === 0 || prev.yesPrice !== cached.yesPrice) {
-                return { ...prev, ...cached };
-              }
-              return prev;
-            });
-          }
-        }, 0); // Use 0ms to run immediately after current render
-      } else {
-        // Log error details for debugging
-        const errorText = await response.text();
-        console.error("Thesis generation failed:", response.status, errorText);
-        
-        // Preserve market prices before showing alert (in case alert triggers re-render)
-        if (currentMarketPrices.yesPrice > 0) {
-          setSelectedMarketSafe((prev) => prev ? {
-            ...prev,
-            yesPrice: currentMarketPrices.yesPrice,
-            noPrice: currentMarketPrices.noPrice,
-            probability: Math.round(currentMarketPrices.yesPrice * 100),
-          } : prev);
-        }
-        
-        alert(`Failed to generate thesis: ${response.status}\n${errorText}`);
-      }
-    } catch (error) {
-      console.error("Error generating thesis:", error);
-      
-      // Preserve market prices before showing alert (in case alert triggers re-render)
-      if (currentMarketPrices.yesPrice > 0) {
-        setSelectedMarketSafe((prev) => prev ? {
-          ...prev,
-          yesPrice: currentMarketPrices.yesPrice,
-          noPrice: currentMarketPrices.noPrice,
-          probability: Math.round(currentMarketPrices.yesPrice * 100),
-        } : prev);
-      }
-      
-      alert(`Error generating thesis: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  };
-
-  const handleAddToPortfolio = (leg: Omit<PortfolioLeg, "id">) => {
-    const newLeg: PortfolioLeg = {
-      ...leg,
-      id: `leg-${Date.now()}-${Math.random()}`,
-    };
-    setPortfolioLegs([...portfolioLegs, newLeg]);
-  };
-
-  const handleDuplicateLeg = (leg: PortfolioLeg) => {
-    const newLeg: PortfolioLeg = {
-      ...leg,
-      id: `leg-${Date.now()}-${Math.random()}`,
-    };
-    setPortfolioLegs([...portfolioLegs, newLeg]);
-  };
-
-  const handleRemoveLeg = (id: string) => {
-    setPortfolioLegs(portfolioLegs.filter((leg) => leg.id !== id));
-  };
-
-  const handleClearAll = () => {
-    setPortfolioLegs([]);
-  };
-
-  // Update trade size from trade ticket
-  useEffect(() => {
-    // This will be updated when trade ticket changes
+    loadTrending();
   }, []);
+
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) {
+      setSearchEvents([]);
+      setIsSearching(false);
+      return;
+    }
+
+    let isActive = true;
+    setIsSearching(true);
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/event-search?q=${encodeURIComponent(q)}&limit=500`);
+        if (!res.ok) throw new Error("Search failed");
+        const data = await res.json();
+        if (isActive) setSearchEvents(data.events || []);
+      } catch (err) {
+        console.error("Search error:", err);
+        if (isActive) setSearchEvents([]);
+      } finally {
+        if (isActive) setIsSearching(false);
+      }
+    }, 250);
+
+    return () => {
+      isActive = false;
+      clearTimeout(t);
+    };
+  }, [query]);
+
+  const parseNumber = (value: unknown) => {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim() !== "") {
+      const num = Number(value);
+      return Number.isFinite(num) ? num : 0;
+    }
+    return 0;
+  };
+
+  const formatUsd = (value: number) => {
+    const abs = Math.abs(value);
+    if (abs >= 1e9) return `$${(value / 1e9).toFixed(1)}B`;
+    if (abs >= 1e6) return `$${(value / 1e6).toFixed(1)}M`;
+    if (abs >= 1e3) return `$${(value / 1e3).toFixed(1)}K`;
+    return `$${Math.round(value).toString()}`;
+  };
+
+  const truncateText = (value: string | undefined, maxLength: number) => {
+    if (!value) return "";
+    if (value.length <= maxLength) return value;
+    return `${value.slice(0, maxLength - 1).trim()}…`;
+  };
+
+  const mapEventToCard = (event: PolymarketEvent): EventCardData => {
+    const tags = (event.tags || [])
+      .map((tag) => {
+        if (typeof tag === "string") return tag;
+        if (tag && typeof tag === "object") {
+          const candidate =
+            (tag as { label?: string; slug?: string }).label ??
+            (tag as { slug?: string }).slug;
+          return candidate || "";
+        }
+        return "";
+      })
+      .filter((tag) => tag.trim() !== "");
+
+    const markets = event.markets || [];
+    const totalVolumeRaw = markets.reduce((sum, market) => sum + parseNumber(market.volume), 0);
+    const totalLiquidityRaw = markets.reduce((sum, market) => sum + parseNumber(market.liquidity), 0);
+    const primaryMarket = markets.reduce(
+      (best, market) => (parseNumber(market.volume) >= parseNumber(best.volume) ? market : best),
+      markets[0] ?? ({} as (typeof markets)[number])
+    );
+
+    return {
+      id: event.id,
+      title: event.title,
+      description: event.description,
+      imageUrl: event.imageUrl,
+      tags,
+      totalVolumeRaw,
+      totalLiquidityRaw,
+      primaryMarketId: primaryMarket?.id,
+    };
+  };
+
+  const eventCards = useMemo(() => events.map(mapEventToCard), [events]);
+  const searchEventCards = useMemo(() => searchEvents.map(mapEventToCard), [searchEvents]);
+
+  const availableCategories = useMemo(() => {
+    const tags = new Set<string>();
+    eventCards.forEach((event) => {
+      event.tags.forEach((tag) => tags.add(tag));
+    });
+    return ["all", ...Array.from(tags).sort((a, b) => a.localeCompare(b))];
+  }, [eventCards]);
+
+  const trendingEvents = useMemo(() => {
+    const filteredByCategory =
+      category === "all"
+        ? eventCards
+        : eventCards.filter((event) => event.tags.includes(category));
+    const sorted = [...filteredByCategory].sort(
+      (a, b) => b.totalVolumeRaw - a.totalVolumeRaw
+    );
+    return sorted.slice(0, 50);
+  }, [eventCards, category]);
+
+  const filteredEvents = useMemo(() => {
+    if (query.trim().length >= 2) {
+      return category === "all"
+        ? searchEventCards
+        : searchEventCards.filter((event) => event.tags.includes(category));
+    }
+    return trendingEvents;
+  }, [query, searchEventCards, trendingEvents, category]);
+
+  const handleSelectEvent = (event: EventCardData) => {
+    const marketId = event.primaryMarketId;
+    if (!marketId) return;
+    router.push(`/dashboard?marketId=${encodeURIComponent(marketId)}`);
+  };
+
+  const handleSearchSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (filteredEvents.length > 0) {
+      handleSelectEvent(filteredEvents[0]);
+    }
+  };
 
   return (
     <main className="min-h-screen bg-background grid-pattern">
       <Header />
 
-      <div className="container mx-auto px-4 py-6">
-        <DomainSwitcher activeDomain={activeDomain} onDomainChange={setActiveDomain} />
+      <div className="container mx-auto px-4 py-8">
+        <div className="max-w-5xl mx-auto">
+          <div className="mb-6 text-center">
+            <h2 className="text-3xl font-semibold text-foreground">
+              Top 50 Trending Polymarket Bets
+            </h2>
+            <p className="text-sm text-muted-foreground mt-2">
+              Search across Polymarket and jump into the analytics dashboard.
+            </p>
+          </div>
 
-        <TerminalTabs activeTab={activeTab} onTabChange={setActiveTab} />
-
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Left Column */}
-          <div className="lg:col-span-3 space-y-4">
-            <MarketPanel
-              domain={activeDomain}
-              selectedMarket={selectedMarket}
-              availableMarkets={availableMarkets}
-              onMarketSelect={setSelectedMarketSafe}
-              onFetchResearch={handleFetchResearch}
-              isLoading={isLoading}
+          <form className="mb-6 flex flex-col lg:flex-row gap-3" onSubmit={handleSearchSubmit}>
+            <input
+              className="flex-1 rounded-lg border border-border bg-background px-4 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+              placeholder="Search a market..."
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
             />
-            {activeTab === "position" && selectedMarket && (
-              <TradeTicket
-                market={selectedMarket}
-                onAddToPortfolio={handleAddToPortfolio}
-                onTradeChange={(size, direction) => {
-                  setTradeSize(size);
-                  setTradeDirection(direction);
-                }}
-              />
-            )}
-          </div>
+            <select
+              value={category}
+              onChange={(event) => setCategory(event.target.value)}
+              className="rounded-lg border border-border bg-background px-4 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+            >
+              {availableCategories.map((tag) => (
+                <option key={tag} value={tag}>
+                  {tag === "all" ? "All categories" : tag}
+                </option>
+              ))}
+            </select>
+            <button
+              type="submit"
+              className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+            >
+              Open Analytics
+            </button>
+          </form>
 
-          {/* Middle Column */}
-          <div className="lg:col-span-5 space-y-4">
-            {activeTab === "position" && (
-              <>
-                {selectedMarket && (
-                  <OrderbookLadder
-                    market={selectedMarket}
-                    tradeSize={tradeSize}
-                    tradeSide={tradeDirection}
-                  />
-                )}
-                <NewsPanel
-                  domain={activeDomain}
-                  articles={articles}
-                  compressionMetrics={compressionMetrics}
-                  loadingStep={loadingStep}
-                  onGenerateThesis={handleGenerateThesis}
-                />
-              </>
-            )}
-            {activeTab === "portfolio" && (
-              <>
-                <PortfolioTable
-                  legs={portfolioLegs}
-                  onDuplicate={handleDuplicateLeg}
-                  onRemove={handleRemoveLeg}
-                  onClearAll={handleClearAll}
-                />
-                <PortfolioPayoffChart legs={portfolioLegs} />
-              </>
-            )}
-            {activeTab === "scenarios" && (
-              <ScenarioModeling
-                legs={portfolioLegs}
-                resolutionDate={selectedMarket?.resolution}
-              />
-            )}
-            {activeTab === "memo" && <TradeMemoBuilder legs={portfolioLegs} />}
-          </div>
+          <div className="rounded-xl border border-border bg-card/60 backdrop-blur-sm">
+            <div className="flex items-center justify-between border-b border-border px-4 py-3 text-xs text-muted-foreground">
+              <span>{query.trim().length >= 2 ? "Search Results" : "Trending Bets"}</span>
+              <span>{filteredEvents.length}</span>
+            </div>
 
-          {/* Right Column */}
-          <div className="lg:col-span-4">
-            <CopilotPanel domain={activeDomain} thesis={thesis} isLoading={isLoading} />
+            {isLoading && (
+              <div className="px-4 py-6 text-sm text-muted-foreground">
+                Loading trending markets...
+              </div>
+            )}
+
+            {!isLoading && error && (
+              <div className="px-4 py-6 text-sm text-destructive">{error}</div>
+            )}
+
+            {!isLoading && !error && filteredEvents.length === 0 && (
+              <div className="px-4 py-6 text-sm text-muted-foreground">
+                {isSearching ? "Searching..." : "No matches found."}
+              </div>
+            )}
+
+            {!isLoading && !error && filteredEvents.length > 0 && (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 p-4 items-stretch">
+                {filteredEvents.map((event) => (
+                  <button
+                    key={event.id}
+                    type="button"
+                    onClick={() => handleSelectEvent(event)}
+                    className="text-left rounded-2xl border border-border bg-card/70 p-4 hover:bg-muted/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 h-full flex flex-col min-h-[280px]"
+                  >
+                    <div className="flex gap-3">
+                      <div className="h-12 w-12 overflow-hidden rounded-full bg-muted/40 flex items-center justify-center text-xs text-muted-foreground">
+                        {event.imageUrl ? (
+                          <img
+                            src={event.imageUrl}
+                            alt={event.title}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          "PM"
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="text-base font-semibold text-foreground truncate">
+                          {truncateText(event.title, 50)}
+                        </h3>
+                        {event.description && (
+                          <p className="text-xs text-muted-foreground mt-1 truncate">
+                            {truncateText(event.description, 60)}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                      <span>Volume {formatUsd(event.totalVolumeRaw)}</span>
+                      <span>Liquidity {formatUsd(event.totalLiquidityRaw)}</span>
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                      {event.tags.slice(0, 4).map((tag) => (
+                        <span key={tag} className="rounded-full border border-border px-2 py-0.5">
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+
+                    <div className="flex-1" />
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>

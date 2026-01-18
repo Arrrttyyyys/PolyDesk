@@ -35,6 +35,16 @@ export interface Thesis {
   recommendation: "BUY YES" | "BUY NO" | "WAIT";
   confidence: number;
   riskLevel: "Low" | "Medium" | "High";
+  hedging: {
+    strategies: string[];
+    triggers: string[];
+    unwindSignals: string[];
+  };
+  riskManagement: {
+    takeProfit: string[];
+    stopLoss: string[];
+    timeStops: string[];
+  };
 }
 
 export interface PortfolioLeg {

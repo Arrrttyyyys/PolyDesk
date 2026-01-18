@@ -135,6 +135,66 @@ export default function CopilotPanel({ domain, thesis, isLoading }: CopilotPanel
           </ul>
         </div>
 
+        {/* Hedging & Risk Management */}
+        <div className="mb-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Shield className="w-4 h-4 text-primary" />
+            <h4 className="font-medium text-foreground">Hedging & Risk Management</h4>
+          </div>
+          <div className="space-y-3">
+            <div className="bg-secondary/30 rounded-lg p-3">
+              <div className="text-xs text-muted-foreground mb-2">Hedging Strategies</div>
+              <ul className="space-y-1">
+                {thesis.hedging.strategies.map((item, idx) => (
+                  <li key={idx} className="text-sm text-muted-foreground flex items-start gap-2">
+                    <span className="text-primary mt-1">•</span>
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div className="bg-secondary/30 rounded-lg p-3">
+              <div className="text-xs text-muted-foreground mb-2">Hedge Triggers</div>
+              <ul className="space-y-1">
+                {thesis.hedging.triggers.map((item, idx) => (
+                  <li key={idx} className="text-sm text-muted-foreground flex items-start gap-2">
+                    <span className="text-primary mt-1">•</span>
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div className="bg-secondary/30 rounded-lg p-3">
+              <div className="text-xs text-muted-foreground mb-2">Unwind Signals</div>
+              <ul className="space-y-1">
+                {thesis.hedging.unwindSignals.map((item, idx) => (
+                  <li key={idx} className="text-sm text-muted-foreground flex items-start gap-2">
+                    <span className="text-primary mt-1">•</span>
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div className="bg-secondary/30 rounded-lg p-3">
+              <div className="text-xs text-muted-foreground mb-2">Risk Management</div>
+              <div className="space-y-2 text-sm text-muted-foreground">
+                <div>
+                  <span className="text-primary">Take Profit:</span>{" "}
+                  {thesis.riskManagement.takeProfit.join(" · ")}
+                </div>
+                <div>
+                  <span className="text-accent">Stop Loss:</span>{" "}
+                  {thesis.riskManagement.stopLoss.join(" · ")}
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Time Stops:</span>{" "}
+                  {thesis.riskManagement.timeStops.join(" · ")}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* Price Catalysts */}
         <div className="space-y-3">
           <div className="bg-primary/5 border border-primary/20 rounded-lg p-3">
