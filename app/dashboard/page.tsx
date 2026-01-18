@@ -245,13 +245,6 @@ export default function DashboardPage() {
       priceFetchInFlightRef.current.add(market.id);
       priceFetchLastAttemptRef.current.set(market.id, Date.now());
 
-      // Only fetch prices if YES price is 0 (fallback indicator)
-      // Once we have a non-zero price, we never check/update it again
-      if (market.yesPrice > 0) {
-        priceFetchInFlightRef.current.delete(market.id);
-        return; // Already have a valid price, no need to fetch
-      }
-
       try {
         const response = await fetch("/api/market-prices", {
           method: "POST",
@@ -656,4 +649,3 @@ export default function DashboardPage() {
     </main>
   );
 }
-
